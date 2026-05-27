@@ -8,11 +8,12 @@ const dbFile = process.env.DASHBOARD_DB_PATH || path.join(__dirname, '../data/da
 const HEX_KEY_REGEX = /^[0-9a-fA-F]{64}$/;
 const rawKey = process.env.ENCRYPTION_KEY;
 
-if (process.env.NODE_ENV === 'production' && !rawKey) {
-  throw new Error('ENCRYPTION_KEY environment variable is required in production.');
+const DEFAULT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+if (process.env.NODE_ENV === 'production' && (!rawKey || rawKey === DEFAULT_KEY)) {
+  throw new Error('A secure, non-default ENCRYPTION_KEY environment variable is required in production.');
 }
 
-const keyToUse = rawKey || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const keyToUse = rawKey || DEFAULT_KEY;
 if (!HEX_KEY_REGEX.test(keyToUse)) {
   throw new Error('ENCRYPTION_KEY must be a 64-character hex string (32 bytes).');
 }
@@ -41,11 +42,11 @@ function encrypt(text) {
 
 function decrypt(encryptedText) {
   if (!encryptedText) return '';
-  const parts = encryptedText.split(':');
-  if (parts.length !== 3) {
-    // Return original text as a plaintext fallback
-    return encryptedText;
+  const GCM_FORMAT_REGEX = /^[0-9a-fA-F]{24}:[0-9a-fA-F]{32}:[0-9a-fA-F]+$/;
+  if (!GCM_FORMAT_REGEX.test(encryptedText)) {
+    return encryptedText; // plaintext fallback
   }
+  const parts = encryptedText.split(':');
   try {
     const iv = Buffer.from(parts[0], 'hex');
     const authTag = Buffer.from(parts[1], 'hex');

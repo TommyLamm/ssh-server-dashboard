@@ -31,8 +31,14 @@ describe('Database and Encryption Module', () => {
     expect(decrypted).toBe(raw);
   });
 
+  test('should fallback to plaintext when decrypting string with colons that is not GCM', () => {
+    const raw = 'my:password:with:colons';
+    const decrypted = dbModule.decrypt(raw);
+    expect(decrypted).toBe(raw);
+  });
+
   test('should return null if decryption fails on a 3-part encrypted string', () => {
-    const invalidCiphertext = '1234567890ab:1234567890ab:1234';
+    const invalidCiphertext = '123456789012345678901234:12345678901234567890123456789012:1234';
     const decrypted = dbModule.decrypt(invalidCiphertext);
     expect(decrypted).toBeNull();
   });
@@ -96,7 +102,22 @@ describe('Database and Encryption Module', () => {
       process.env.NODE_ENV = 'production';
       delete process.env.ENCRYPTION_KEY;
       jest.isolateModules(() => {
-        expect(() => require('../src/db')).toThrow('ENCRYPTION_KEY environment variable is required in production.');
+        expect(() => require('../src/db')).toThrow('A secure, non-default ENCRYPTION_KEY environment variable is required in production.');
+      });
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+      process.env.ENCRYPTION_KEY = originalKey;
+    }
+  });
+
+  test('should throw error if in production and ENCRYPTION_KEY is the default key', () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalKey = process.env.ENCRYPTION_KEY;
+    try {
+      process.env.NODE_ENV = 'production';
+      process.env.ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      jest.isolateModules(() => {
+        expect(() => require('../src/db')).toThrow('A secure, non-default ENCRYPTION_KEY environment variable is required in production.');
       });
     } finally {
       process.env.NODE_ENV = originalNodeEnv;
