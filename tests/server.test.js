@@ -143,6 +143,51 @@ describe('Server & WebSocket API', () => {
     expect(db.addServer).toHaveBeenCalled();
   });
 
+  test('POST /api/servers fails validation with invalid/missing name', async () => {
+    const token = jwt.sign({ username: 'admin' }, 'fallback-jwt-secret');
+    const res = await makeRequest('POST', '/api/servers', {
+      name: '',
+      host: '2.2.2.2',
+      port: 22,
+      username: 'root',
+      auth_type: 'password'
+    }, {
+      'Authorization': `Bearer ${token}`
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Name must be a non-empty string');
+  });
+
+  test('POST /api/servers fails validation with invalid port', async () => {
+    const token = jwt.sign({ username: 'admin' }, 'fallback-jwt-secret');
+    const res = await makeRequest('POST', '/api/servers', {
+      name: 'Server Name',
+      host: '2.2.2.2',
+      port: 99999,
+      username: 'root',
+      auth_type: 'password'
+    }, {
+      'Authorization': `Bearer ${token}`
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Port must be an integer between 1 and 65535');
+  });
+
+  test('POST /api/servers fails validation with invalid auth_type', async () => {
+    const token = jwt.sign({ username: 'admin' }, 'fallback-jwt-secret');
+    const res = await makeRequest('POST', '/api/servers', {
+      name: 'Server Name',
+      host: '2.2.2.2',
+      port: 22,
+      username: 'root',
+      auth_type: 'invalid-auth'
+    }, {
+      'Authorization': `Bearer ${token}`
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Auth type must be either password or key');
+  });
+
   test('DELETE /api/servers/:id success with token', async () => {
     db.deleteServer.mockResolvedValue(1);
 
@@ -225,14 +270,17 @@ describe('Server & WebSocket API', () => {
         ws.send(JSON.stringify({ type: 'fetch-processes' }));
       } else if (data.type === 'processes') {
         expect(data.processes[0].pid).toBe(1204);
+        expect(data.serverId).toBe(1);
         
         ws.send(JSON.stringify({ type: 'fetch-docker' }));
       } else if (data.type === 'docker') {
         expect(data.containers[0].name).toBe('web');
+        expect(data.serverId).toBe(1);
 
         ws.send(JSON.stringify({ type: 'fetch-logs', logPath: '/var/log/syslog', isService: false }));
       } else if (data.type === 'logs') {
         expect(data.logs).toBe('file logs');
+        expect(data.serverId).toBe(1);
         ws.close();
       }
     });

@@ -75,6 +75,24 @@ app.get('/api/servers', authenticate, async (req, res) => {
 
 app.post('/api/servers', authenticate, async (req, res) => {
   try {
+    const { name, host, username, port, auth_type } = req.body;
+
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Name must be a non-empty string' });
+    }
+    if (typeof host !== 'string' || !host.trim()) {
+      return res.status(400).json({ error: 'Host must be a non-empty string' });
+    }
+    if (typeof username !== 'string' || !username.trim()) {
+      return res.status(400).json({ error: 'Username must be a non-empty string' });
+    }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return res.status(400).json({ error: 'Port must be an integer between 1 and 65535' });
+    }
+    if (auth_type !== 'password' && auth_type !== 'key') {
+      return res.status(400).json({ error: 'Auth type must be either password or key' });
+    }
+
     const serverId = await db.addServer(req.body);
     res.status(201).json({ id: serverId });
   } catch (err) {
@@ -194,27 +212,33 @@ app.ws('/ws/monitor', (ws, req) => {
       }
 
       if (data.type === 'fetch-processes') {
-        if (!serverInfo) return;
+        if (!ws.activeServerId || !serverInfo || ws.activeServerId !== serverInfo.id) {
+          return;
+        }
         const conn = await sshPool.getConnection(serverInfo);
         const processesOut = await sshPool.execCommand(conn, "ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n 30");
         const processes = sshPool.parseProcesses(processesOut);
-        sendWs(ws, { type: 'processes', processes });
+        sendWs(ws, { type: 'processes', serverId: serverInfo.id, processes });
       }
 
       if (data.type === 'fetch-docker') {
-        if (!serverInfo) return;
+        if (!ws.activeServerId || !serverInfo || ws.activeServerId !== serverInfo.id) {
+          return;
+        }
         try {
           const conn = await sshPool.getConnection(serverInfo);
           const dockerOut = await sshPool.execCommand(conn, "docker stats --no-stream --format '{\"name\":\"{{.Name}}\",\"cpu\":\"{{.CPUPerc}}\",\"mem\":\"{{.MemUsage}}\"}'");
           const containers = sshPool.parseDocker(dockerOut);
-          sendWs(ws, { type: 'docker', containers });
+          sendWs(ws, { type: 'docker', serverId: serverInfo.id, containers });
         } catch (e) {
-          sendWs(ws, { type: 'docker', error: 'Docker daemon unreachable or not installed' });
+          sendWs(ws, { type: 'docker', serverId: serverInfo.id, error: 'Docker daemon unreachable or not installed' });
         }
       }
 
       if (data.type === 'fetch-logs') {
-        if (!serverInfo) return;
+        if (!ws.activeServerId || !serverInfo || ws.activeServerId !== serverInfo.id) {
+          return;
+        }
 
         // Validation against command injection
         const serviceRegex = /^[a-zA-Z0-9_\-@.]*$/;
@@ -235,7 +259,7 @@ app.ws('/ws/monitor', (ws, req) => {
           logCmd = `journalctl -u "${data.logPath}" -n 100 --no-pager`;
         }
         const logs = await sshPool.execCommand(conn, logCmd);
-        sendWs(ws, { type: 'logs', logs });
+        sendWs(ws, { type: 'logs', serverId: serverInfo.id, logs });
       }
 
     } catch (e) {
