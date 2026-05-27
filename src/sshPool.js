@@ -1,9 +1,10 @@
 const { Client } = require('ssh2');
 
 function parseCpu(stdout) {
-  const match = stdout.match(/%Cpu\(s\):\s*([\d.]+)\s*us,\s*([\d.]+)\s*sy/);
+  const match = stdout.match(/([\d.]+)\s*%?\s*id/);
   if (match) {
-    return parseFloat(match[1]) + parseFloat(match[2]);
+    const idle = parseFloat(match[1]);
+    return Math.max(0, Math.min(100, 100 - idle));
   }
   return 0.0;
 }
@@ -16,6 +17,9 @@ function parseMem(stdout) {
     const total = parseInt(cols[1], 10);
     const used = parseInt(cols[2], 10);
     const percent = total > 0 ? (used / total) * 100 : 0;
+    if (isNaN(total) || isNaN(used) || isNaN(percent)) {
+      return { total: 0, used: 0, percent: 0 };
+    }
     return { total, used, percent };
   }
   return { total: 0, used: 0, percent: 0 };
@@ -35,7 +39,7 @@ function parseDisk(stdout) {
         used: cols[3],
         avail: cols[4],
         used_percent: parseInt(cols[5].replace('%', ''), 10),
-        mount: cols[6]
+        mount: cols.slice(6).join(' ')
       });
     }
   });
@@ -76,18 +80,17 @@ function parseDocker(stdout) {
   return containers;
 }
 
-// Active connections pool mapping server ID to client connections
+// Active connections pool mapping server ID to client connection promise
 const pool = {};
 
 function getConnection(server) {
-  return new Promise((resolve, reject) => {
-    if (pool[server.id]) {
-      return resolve(pool[server.id]);
-    }
+  if (pool[server.id]) {
+    return pool[server.id];
+  }
 
+  const promise = new Promise((resolve, reject) => {
     const conn = new Client();
     conn.on('ready', () => {
-      pool[server.id] = conn;
       resolve(conn);
     }).on('error', (err) => {
       delete pool[server.id];
@@ -100,27 +103,61 @@ function getConnection(server) {
       username: server.username,
       password: server.auth_type === 'password' ? server.password : undefined,
       privateKey: server.auth_type === 'key' ? server.private_key : undefined,
-      readyTimeout: 10000
+      readyTimeout: 10000,
+      keepaliveInterval: 10000,
+      keepaliveCountMax: 3
     });
   });
+
+  pool[server.id] = promise;
+  return promise;
 }
 
 function execCommand(conn, cmd) {
   return new Promise((resolve, reject) => {
-    conn.exec(cmd, (err, stream) => {
-      if (err) return reject(err);
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`Command timed out after 15s: ${cmd}`));
+    }, 15000);
+
+    // Enforce C locale for parsing reliability
+    conn.exec(`export LC_ALL=C; ${cmd}`, (err, stream) => {
+      if (err) {
+        clearTimeout(timeoutId);
+        return reject(err);
+      }
+
       let stdout = '';
       let stderr = '';
+
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+      };
+
       stream.on('close', (code) => {
+        cleanup();
         if (code !== 0) {
-          reject(new Error(stderr || `Exited with code ${code}`));
+          reject(new Error(stderr.trim() || `Exited with code ${code}`));
         } else {
           resolve(stdout);
         }
-      }).on('data', (data) => {
+      });
+
+      stream.on('data', (data) => {
         stdout += data.toString();
-      }).stderr.on('data', (data) => {
+      });
+
+      stream.stderr.on('data', (data) => {
         stderr += data.toString();
+      });
+
+      stream.on('error', (err) => {
+        cleanup();
+        reject(err);
+      });
+
+      stream.stderr.on('error', (err) => {
+        cleanup();
+        reject(err);
       });
     });
   });

@@ -18,6 +18,12 @@ Swap:     2147483648   536870912  1610612736`;
     expect(res.percent).toBeCloseTo(25.0);
   });
 
+  test('parseMem handles invalid output and returns defaults', () => {
+    const stdout = 'Mem: invalid total used';
+    const res = parseMem(stdout);
+    expect(res).toEqual({ total: 0, used: 0, percent: 0 });
+  });
+
   test('parseDisk parses block devices details', () => {
     const stdout = `/dev/sda1 ext4 100G 40G 60G 40% /`;
     const res = parseDisk(stdout);
@@ -25,6 +31,13 @@ Swap:     2147483648   536870912  1610612736`;
     expect(res[0].device).toBe('/dev/sda1');
     expect(res[0].used_percent).toBe(40);
     expect(res[0].mount).toBe('/');
+  });
+
+  test('parseDisk handles mount paths with spaces', () => {
+    const stdout = `/dev/sda1 ext4 100G 40G 60G 40% /my mount path`;
+    const res = parseDisk(stdout);
+    expect(res.length).toBe(1);
+    expect(res[0].mount).toBe('/my mount path');
   });
 
   test('parseProcesses parses processes columns', () => {
@@ -37,5 +50,16 @@ Swap:     2147483648   536870912  1610612736`;
     expect(res[0].pid).toBe(1204);
     expect(res[0].cpu).toBe(2.4);
     expect(res[0].command).toBe('nginx');
+  });
+
+  test('parseDocker parses line-separated Docker JSON and handles invalid JSON', () => {
+    const stdout = 
+`{"ID":"1","Name":"web","Status":"Up"}
+{"ID":"2","Name":"db","Status":"Exited"}
+invalid-json-line`;
+    const res = parseDocker(stdout);
+    expect(res.length).toBe(2);
+    expect(res[0].Name).toBe('web');
+    expect(res[1].Name).toBe('db');
   });
 });
