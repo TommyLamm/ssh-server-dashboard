@@ -1,10 +1,168 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Server Dashboard</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Linux Server Status Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-    <h1>Server Dashboard Stub</h1>
+
+  <!-- Login Overlay -->
+  <div id="loginPage" class="login-container">
+    <div class="login-card">
+      <h2 style="text-align: center; color: var(--accent-cyan);">Server Dashboard</h2>
+      <p style="text-align: center; font-size: 13px; color: var(--text-secondary);">Enter credential configuration to login</p>
+      <input type="text" id="username" class="input-field" placeholder="Username">
+      <input type="password" id="password" class="input-field" placeholder="Password">
+      <button onclick="login()" class="btn">Access Dashboard</button>
+      <div id="loginError" style="color: var(--accent-red); font-size: 12px; text-align: center;"></div>
+    </div>
+  </div>
+
+  <!-- Dashboard App -->
+  <div id="dashboardApp" class="dashboard-container" style="display: none;">
+    <!-- Collapsible Sidebar -->
+    <aside id="sidebar" class="sidebar">
+      <div>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+          <h2 style="color: var(--accent-cyan); font-size: 20px;">📊 Dashboard</h2>
+          <button onclick="toggleSidebar()" class="hamburger">✕</button>
+        </div>
+        <button onclick="openServerModal()" class="btn" style="width: 100%;">+ Add Host Server</button>
+        
+        <div id="serverList" style="margin-top: 20px;"></div>
+      </div>
+      <div>
+        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px;" id="loginUserInfo">Logged in as admin</div>
+        <button onclick="logout()" class="btn" style="background: var(--accent-red); color: white; width: 100%;">Log Out</button>
+      </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="main-content">
+      <header style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+          <button onclick="toggleSidebar()" class="hamburger" style="display: block;">☰</button>
+          <div>
+            <h1 id="activeServerName">Select a Host Server</h1>
+            <p id="activeServerUptime" style="color: var(--text-secondary); font-size: 13px;"></p>
+          </div>
+        </div>
+        <button id="btnDeleteServer" onclick="deleteActiveServer()" class="btn" style="background: var(--accent-red); color: white; display: none;">Delete Server</button>
+      </header>
+
+      <!-- Panel Content -->
+      <div id="activeServerDetails" style="display: none;">
+        <nav class="tabs">
+          <div id="tab-overview" class="tab active" onclick="switchTab('overview')">Overview</div>
+          <div id="tab-processes" class="tab" onclick="switchTab('processes')">Processes</div>
+          <div id="tab-docker" class="tab" onclick="switchTab('docker')">Docker Containers</div>
+          <div id="tab-logs" class="tab" onclick="switchTab('logs')">System Logs</div>
+        </nav>
+
+        <!-- Tab 1: Overview -->
+        <section id="panel-overview" class="tab-panel">
+          <div class="grid-metrics">
+            <div class="metric-card">
+              <h3>CPU Utilization</h3>
+              <h1 id="metric-cpu-val" style="color: var(--accent-cyan); font-size: 36px; margin: 10px 0;">0.0%</h1>
+              <div style="height: 40px;">
+                <canvas id="cpuSparkline" width="300" height="40"></canvas>
+              </div>
+            </div>
+            <div class="metric-card">
+              <h3>Memory (RAM)</h3>
+              <h1 id="metric-ram-val" style="color: var(--accent-purple); font-size: 36px; margin: 10px 0;">0.0%</h1>
+              <p id="metric-ram-details" style="font-size: 12px; color: var(--text-secondary);"></p>
+            </div>
+            <div class="metric-card">
+              <h3>Primary Storage (/)</h3>
+              <h1 id="metric-disk-val" style="color: var(--accent-yellow); font-size: 36px; margin: 10px 0;">0%</h1>
+              <p id="metric-disk-details" style="font-size: 12px; color: var(--text-secondary);"></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab 2: Processes -->
+        <section id="panel-processes" class="tab-panel" style="display: none;">
+          <div style="overflow-x: auto; background: var(--bg-secondary); padding: 15px; border-radius: 8px;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+              <thead>
+                <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary);">
+                  <th style="padding: 10px;">PID</th>
+                  <th>USER</th>
+                  <th>CPU %</th>
+                  <th>MEM %</th>
+                  <th>COMMAND</th>
+                </tr>
+              </thead>
+              <tbody id="processesList"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Tab 3: Docker Containers -->
+        <section id="panel-docker" class="tab-panel" style="display: none;">
+          <div style="background: var(--bg-secondary); padding: 15px; border-radius: 8px;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+              <thead>
+                <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary);">
+                  <th style="padding: 10px;">CONTAINER</th>
+                  <th>CPU %</th>
+                  <th>MEM USAGE</th>
+                </tr>
+              </thead>
+              <tbody id="dockerList"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Tab 4: Logs -->
+        <section id="panel-logs" class="tab-panel" style="display: none;">
+          <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <select id="logSourceType" class="input-field" style="width: 150px;" onchange="updateLogPlaceholder()">
+              <option value="service">Systemd Service</option>
+              <option value="file">Log File Path</option>
+            </select>
+            <input type="text" id="logPath" class="input-field" placeholder="e.g. nginx">
+            <button onclick="fetchLogs()" class="btn">Stream Logs</button>
+          </div>
+          <pre id="logConsole" style="background: #000; border: 1px solid var(--border-color); padding: 20px; border-radius: 8px; max-height: 400px; overflow-y: auto; color: #00ff00; font-family: monospace; font-size: 12px;"></pre>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- Server Connection Modal -->
+  <div id="serverModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <h3 style="margin-bottom: 15px; color: var(--accent-cyan);">Connect New Host Server</h3>
+      <div style="display: flex; flex-direction: column; gap: 12px;">
+        <input type="text" id="hostName" class="input-field" placeholder="Server Name (e.g. Production Node)">
+        <div style="display: flex; gap: 10px;">
+          <input type="text" id="hostIp" class="input-field" placeholder="IP Address / Hostname" style="flex-grow: 1;">
+          <input type="number" id="hostPort" class="input-field" placeholder="Port" value="22" style="width: 80px;">
+        </div>
+        <input type="text" id="hostUser" class="input-field" placeholder="SSH Username">
+        
+        <select id="hostAuthType" class="input-field" onchange="toggleAuthFields()">
+          <option value="password">Password Auth</option>
+          <option value="key">Private Key Auth</option>
+        </select>
+
+        <input type="password" id="hostPassword" class="input-field" placeholder="SSH Password">
+        <textarea id="hostPrivateKey" class="input-field" placeholder="Paste Private Key Content" style="height: 100px; display: none; font-family: monospace;"></textarea>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+          <button onclick="closeServerModal()" class="btn" style="background: var(--bg-secondary); color: white;">Cancel</button>
+          <button onclick="saveServer()" class="btn">Save & Connect</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
