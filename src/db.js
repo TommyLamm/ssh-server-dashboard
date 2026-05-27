@@ -6,11 +6,17 @@ const fs = require('fs');
 const dbFile = process.env.DASHBOARD_DB_PATH || path.join(__dirname, '../data/dashboard.db');
 
 const HEX_KEY_REGEX = /^[0-9a-fA-F]{64}$/;
-const rawKey = process.env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-if (!HEX_KEY_REGEX.test(rawKey)) {
+const rawKey = process.env.ENCRYPTION_KEY;
+
+if (process.env.NODE_ENV === 'production' && !rawKey) {
+  throw new Error('ENCRYPTION_KEY environment variable is required in production.');
+}
+
+const keyToUse = rawKey || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+if (!HEX_KEY_REGEX.test(keyToUse)) {
   throw new Error('ENCRYPTION_KEY must be a 64-character hex string (32 bytes).');
 }
-const KEY = Buffer.from(rawKey, 'hex');
+const KEY = Buffer.from(keyToUse, 'hex');
 
 let db = null;
 
@@ -50,8 +56,8 @@ function decrypt(encryptedText) {
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (err) {
-    console.warn('Decryption failed, returning ciphertext:', err.message);
-    return encryptedText;
+    console.warn('Decryption failed:', err.message);
+    return null; // Return null instead of ciphertext to avoid leaking it or passing it to connections
   }
 }
 

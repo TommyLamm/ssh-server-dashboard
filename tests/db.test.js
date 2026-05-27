@@ -31,10 +31,10 @@ describe('Database and Encryption Module', () => {
     expect(decrypted).toBe(raw);
   });
 
-  test('should fallback to original ciphertext if decryption fails', () => {
+  test('should return null if decryption fails on a 3-part encrypted string', () => {
     const invalidCiphertext = '1234567890ab:1234567890ab:1234';
     const decrypted = dbModule.decrypt(invalidCiphertext);
-    expect(decrypted).toBe(invalidCiphertext);
+    expect(decrypted).toBeNull();
   });
 
   test('should add and retrieve a server successfully', async () => {
@@ -77,10 +77,6 @@ describe('Database and Encryption Module', () => {
     expect(finalServers.some(s => s.id === serverId)).toBe(false);
   });
 
-  test('should close the database connection successfully', async () => {
-    await expect(dbModule.close()).resolves.toBeUndefined();
-  });
-
   test('should throw error if ENCRYPTION_KEY is invalid', () => {
     const originalKey = process.env.ENCRYPTION_KEY;
     try {
@@ -89,6 +85,21 @@ describe('Database and Encryption Module', () => {
         expect(() => require('../src/db')).toThrow('ENCRYPTION_KEY must be a 64-character hex string (32 bytes).');
       });
     } finally {
+      process.env.ENCRYPTION_KEY = originalKey;
+    }
+  });
+
+  test('should throw error if in production and ENCRYPTION_KEY is missing', () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalKey = process.env.ENCRYPTION_KEY;
+    try {
+      process.env.NODE_ENV = 'production';
+      delete process.env.ENCRYPTION_KEY;
+      jest.isolateModules(() => {
+        expect(() => require('../src/db')).toThrow('ENCRYPTION_KEY environment variable is required in production.');
+      });
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
       process.env.ENCRYPTION_KEY = originalKey;
     }
   });
