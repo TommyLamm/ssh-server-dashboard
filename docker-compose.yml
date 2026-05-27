@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  dashboard:
+    build: .
+    image: server-dashboard:latest
+    container_name: server-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DASHBOARD_USERNAME=admin
+      - DASHBOARD_PASSWORD=admin
+      - DASHBOARD_SECRET=SuperSecretKeyForJWTAuth123!
+      - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef  # 32-byte hex key for AES-256-GCM
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
