@@ -6,9 +6,9 @@ services:
     image: server-dashboard:latest
     container_name: server-dashboard
     ports:
-      - "3000:3000"
+      - "6666:6666"
     environment:
-      - PORT=${PORT:-3000}
+      - PORT=${PORT:-6666}
       - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-admin}
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-admin}
       - DASHBOARD_SECRET=${DASHBOARD_SECRET:-SuperSecretKeyForJWTAuth123!}
