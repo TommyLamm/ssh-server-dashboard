@@ -14,5 +14,8 @@ services:
       - DASHBOARD_SECRET=${DASHBOARD_SECRET:-SuperSecretKeyForJWTAuth123!}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
     volumes:
-      - ./data:/app/data
+      - dashboard-data:/app/data
     restart: unless-stopped
+
+volumes:
+  dashboard-data:
