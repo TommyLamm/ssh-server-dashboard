@@ -76,11 +76,17 @@
               <h3>Memory (RAM)</h3>
               <h1 id="metric-ram-val" style="color: var(--accent-purple); font-size: 36px; margin: 10px 0;">0.0%</h1>
               <p id="metric-ram-details" style="font-size: 12px; color: var(--text-secondary);"></p>
+              <div style="height: 40px;">
+                <canvas id="ramSparkline" width="300" height="40"></canvas>
+              </div>
             </div>
             <div class="metric-card">
               <h3>Primary Storage (/)</h3>
               <h1 id="metric-disk-val" style="color: var(--accent-yellow); font-size: 36px; margin: 10px 0;">0%</h1>
               <p id="metric-disk-details" style="font-size: 12px; color: var(--text-secondary);"></p>
+              <div style="height: 40px;">
+                <canvas id="diskSparkline" width="300" height="40"></canvas>
+              </div>
             </div>
           </div>
         </section>
@@ -91,10 +97,10 @@
             <table style="width: 100%; border-collapse: collapse; text-align: left;">
               <thead>
                 <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary);">
-                  <th style="padding: 10px;">PID</th>
-                  <th>USER</th>
-                  <th>CPU %</th>
-                  <th>MEM %</th>
+                  <th style="padding: 10px; cursor: pointer;" onclick="toggleProcessSort('pid')">PID ⇅</th>
+                  <th style="cursor: pointer;" onclick="toggleProcessSort('user')">USER ⇅</th>
+                  <th style="cursor: pointer;" onclick="toggleProcessSort('cpu')">CPU % ⇅</th>
+                  <th style="cursor: pointer;" onclick="toggleProcessSort('mem')">MEM % ⇅</th>
                   <th>COMMAND</th>
                 </tr>
               </thead>
@@ -110,8 +116,10 @@
               <thead>
                 <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary);">
                   <th style="padding: 10px;">CONTAINER</th>
+                  <th>STATUS</th>
                   <th>CPU %</th>
                   <th>MEM USAGE</th>
+                  <th>ACTIONS</th>
                 </tr>
               </thead>
               <tbody id="dockerList"></tbody>
