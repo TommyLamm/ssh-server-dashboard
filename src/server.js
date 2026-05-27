@@ -75,7 +75,7 @@ app.get('/api/servers', authenticate, async (req, res) => {
 
 app.post('/api/servers', authenticate, async (req, res) => {
   try {
-    const { name, host, username, port, auth_type } = req.body;
+    const { name, host, username, port, auth_type, password, private_key } = req.body || {};
 
     if (typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'Name must be a non-empty string' });
@@ -91,6 +91,12 @@ app.post('/api/servers', authenticate, async (req, res) => {
     }
     if (auth_type !== 'password' && auth_type !== 'key') {
       return res.status(400).json({ error: 'Auth type must be either password or key' });
+    }
+    if (auth_type === 'password' && (typeof password !== 'string' || !password.trim())) {
+      return res.status(400).json({ error: 'Password must be a non-empty string when auth_type is password' });
+    }
+    if (auth_type === 'key' && (typeof private_key !== 'string' || !private_key.trim())) {
+      return res.status(400).json({ error: 'Private key must be a non-empty string when auth_type is key' });
     }
 
     const serverId = await db.addServer(req.body);
@@ -134,31 +140,35 @@ app.ws('/ws/monitor', (ws, req) => {
 
   ws.activeServerId = null;
   ws.monitorInterval = null;
+  ws.authenticated = false;
+
+  let activeSessionId = 0;
   let serverInfo = null;
-  let authenticated = false;
 
   ws.on('message', async (msg) => {
     try {
       const data = JSON.parse(msg);
 
       if (data.type === 'auth') {
-        jwt.verify(data.token, JWT_SECRET, async (err) => {
-          if (err) {
-            sendWs(ws, { type: 'error', message: 'Auth failed' });
-            return ws.close();
-          }
-          authenticated = true;
+        try {
+          jwt.verify(data.token, JWT_SECRET);
+          ws.authenticated = true;
           sendWs(ws, { type: 'authenticated' });
-        });
+        } catch (err) {
+          sendWs(ws, { type: 'error', message: 'Auth failed' });
+          return ws.close();
+        }
         return;
       }
 
-      if (!authenticated) {
+      if (!ws.authenticated) {
         sendWs(ws, { type: 'error', message: 'Unauthorized' });
         return ws.close();
       }
 
       if (data.type === 'select-server') {
+        const currentSessionId = ++activeSessionId;
+
         if (ws.monitorInterval) {
           clearInterval(ws.monitorInterval);
           ws.monitorInterval = null;
@@ -166,6 +176,8 @@ app.ws('/ws/monitor', (ws, req) => {
         ws.activeServerId = null;
 
         const servers = await db.getServers();
+        if (currentSessionId !== activeSessionId) return;
+
         serverInfo = servers.find(s => s.id === parseInt(data.serverId, 10));
 
         if (!serverInfo) {
@@ -176,6 +188,7 @@ app.ws('/ws/monitor', (ws, req) => {
 
         async function fetchMetrics() {
           try {
+            if (currentSessionId !== activeSessionId) return;
             if (ws.activeServerId !== serverInfo.id) return;
             const conn = await sshPool.getConnection(serverInfo);
             
@@ -191,6 +204,8 @@ app.ws('/ws/monitor', (ws, req) => {
             const disk = sshPool.parseDisk(diskOut);
             const uptime = uptimeOut.trim();
 
+            if (currentSessionId !== activeSessionId) return;
+
             sendWs(ws, {
               type: 'metrics',
               serverId: serverInfo.id,
@@ -198,6 +213,7 @@ app.ws('/ws/monitor', (ws, req) => {
               metrics: { cpu, mem, disk, uptime }
             });
           } catch (err) {
+            if (currentSessionId !== activeSessionId) return;
             sendWs(ws, {
               type: 'metrics',
               serverId: serverInfo.id,
@@ -212,31 +228,34 @@ app.ws('/ws/monitor', (ws, req) => {
       }
 
       if (data.type === 'fetch-processes') {
-        if (!ws.activeServerId || !serverInfo || ws.activeServerId !== serverInfo.id) {
+        const targetServer = serverInfo;
+        if (!ws.activeServerId || !targetServer || ws.activeServerId !== targetServer.id) {
           return;
         }
-        const conn = await sshPool.getConnection(serverInfo);
+        const conn = await sshPool.getConnection(targetServer);
         const processesOut = await sshPool.execCommand(conn, "ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n 30");
         const processes = sshPool.parseProcesses(processesOut);
-        sendWs(ws, { type: 'processes', serverId: serverInfo.id, processes });
+        sendWs(ws, { type: 'processes', serverId: targetServer.id, processes });
       }
 
       if (data.type === 'fetch-docker') {
-        if (!ws.activeServerId || !serverInfo || ws.activeServerId !== serverInfo.id) {
+        const targetServer = serverInfo;
+        if (!ws.activeServerId || !targetServer || ws.activeServerId !== targetServer.id) {
           return;
         }
         try {
-          const conn = await sshPool.getConnection(serverInfo);
+          const conn = await sshPool.getConnection(targetServer);
           const dockerOut = await sshPool.execCommand(conn, "docker stats --no-stream --format '{\"name\":\"{{.Name}}\",\"cpu\":\"{{.CPUPerc}}\",\"mem\":\"{{.MemUsage}}\"}'");
           const containers = sshPool.parseDocker(dockerOut);
-          sendWs(ws, { type: 'docker', serverId: serverInfo.id, containers });
+          sendWs(ws, { type: 'docker', serverId: targetServer.id, containers });
         } catch (e) {
-          sendWs(ws, { type: 'docker', serverId: serverInfo.id, error: 'Docker daemon unreachable or not installed' });
+          sendWs(ws, { type: 'docker', serverId: targetServer.id, error: 'Docker daemon unreachable or not installed' });
         }
       }
 
       if (data.type === 'fetch-logs') {
-        if (!ws.activeServerId || !serverInfo || ws.activeServerId !== serverInfo.id) {
+        const targetServer = serverInfo;
+        if (!ws.activeServerId || !targetServer || ws.activeServerId !== targetServer.id) {
           return;
         }
 
@@ -253,13 +272,13 @@ app.ws('/ws/monitor', (ws, req) => {
           }
         }
 
-        const conn = await sshPool.getConnection(serverInfo);
+        const conn = await sshPool.getConnection(targetServer);
         let logCmd = `tail -n 100 "${data.logPath}"`;
         if (data.isService) {
           logCmd = `journalctl -u "${data.logPath}" -n 100 --no-pager`;
         }
         const logs = await sshPool.execCommand(conn, logCmd);
-        sendWs(ws, { type: 'logs', serverId: serverInfo.id, logs });
+        sendWs(ws, { type: 'logs', serverId: targetServer.id, logs });
       }
 
     } catch (e) {

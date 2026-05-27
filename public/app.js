@@ -10,9 +10,18 @@ function renderDocker(containers, error) {
   // Front-end rendering stub
 }
 
+function updateOverviewMetrics(metrics) {
+  // Front-end rendering stub
+}
+
 function handleSocketMessage(event) {
   const data = JSON.parse(event.data);
 
+  if (data.type === 'metrics') {
+    if (data.serverId === activeServerId) {
+      updateOverviewMetrics(data.metrics);
+    }
+  }
   if (data.type === 'processes') {
     if (data.serverId === activeServerId) {
       renderProcesses(data.processes);

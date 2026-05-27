@@ -188,6 +188,38 @@ describe('Server & WebSocket API', () => {
     expect(res.body.error).toBe('Auth type must be either password or key');
   });
 
+  test('POST /api/servers fails validation with missing password for password auth_type', async () => {
+    const token = jwt.sign({ username: 'admin' }, 'fallback-jwt-secret');
+    const res = await makeRequest('POST', '/api/servers', {
+      name: 'Server 1',
+      host: '2.2.2.2',
+      port: 22,
+      username: 'root',
+      auth_type: 'password',
+      password: ''
+    }, {
+      'Authorization': `Bearer ${token}`
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Password must be a non-empty string when auth_type is password');
+  });
+
+  test('POST /api/servers fails validation with missing private_key for key auth_type', async () => {
+    const token = jwt.sign({ username: 'admin' }, 'fallback-jwt-secret');
+    const res = await makeRequest('POST', '/api/servers', {
+      name: 'Server 1',
+      host: '2.2.2.2',
+      port: 22,
+      username: 'root',
+      auth_type: 'key',
+      private_key: ''
+    }, {
+      'Authorization': `Bearer ${token}`
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Private key must be a non-empty string when auth_type is key');
+  });
+
   test('DELETE /api/servers/:id success with token', async () => {
     db.deleteServer.mockResolvedValue(1);
 
