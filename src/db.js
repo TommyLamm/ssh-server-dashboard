@@ -4,8 +4,13 @@ const path = require('path');
 const fs = require('fs');
 
 const dbFile = process.env.DASHBOARD_DB_PATH || path.join(__dirname, '../data/dashboard.db');
-const dbDir = path.dirname(dbFile);
-if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
+const HEX_KEY_REGEX = /^[0-9a-fA-F]{64}$/;
+const rawKey = process.env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+if (!HEX_KEY_REGEX.test(rawKey)) {
+  throw new Error('ENCRYPTION_KEY must be a 64-character hex string (32 bytes).');
+}
+const KEY = Buffer.from(rawKey, 'hex');
 
 let db = null;
 
@@ -16,23 +21,7 @@ function getDb() {
   return db;
 }
 
-// Hook into Jest's afterAll to close the database connection before the test file is unlinked.
-if (typeof global.afterAll === 'function') {
-  const originalAfterAll = global.afterAll;
-  global.afterAll = function (fn) {
-    originalAfterAll(async () => {
-      if (db) {
-        await new Promise((resolve) => db.close(() => resolve()));
-        db = null;
-      }
-      return fn();
-    });
-  };
-}
-
 const ALGORITHM = 'aes-256-gcm';
-// key must be 32 bytes (64 hex characters)
-const KEY = Buffer.from(process.env.ENCRYPTION_KEY || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'hex');
 
 function encrypt(text) {
   if (!text) return '';
@@ -47,19 +36,30 @@ function encrypt(text) {
 function decrypt(encryptedText) {
   if (!encryptedText) return '';
   const parts = encryptedText.split(':');
-  if (parts.length !== 3) return '';
-  const iv = Buffer.from(parts[0], 'hex');
-  const authTag = Buffer.from(parts[1], 'hex');
-  const encrypted = parts[2];
-  const decipher = crypto.createDecipheriv(ALGORITHM, KEY, iv);
-  decipher.setAuthTag(authTag);
-  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
+  if (parts.length !== 3) {
+    // Return original text as a plaintext fallback
+    return encryptedText;
+  }
+  try {
+    const iv = Buffer.from(parts[0], 'hex');
+    const authTag = Buffer.from(parts[1], 'hex');
+    const encrypted = parts[2];
+    const decipher = crypto.createDecipheriv(ALGORITHM, KEY, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  } catch (err) {
+    console.warn('Decryption failed, returning ciphertext:', err.message);
+    return encryptedText;
+  }
 }
 
 function init() {
   return new Promise((resolve, reject) => {
+    const dbDir = path.dirname(dbFile);
+    if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+
     const database = getDb();
     database.serialize(() => {
       database.run(`
@@ -123,11 +123,29 @@ function deleteServer(id) {
   });
 }
 
+function close() {
+  return new Promise((resolve, reject) => {
+    if (!db) {
+      resolve();
+      return;
+    }
+    db.close((err) => {
+      if (err) {
+        reject(err);
+      } else {
+        db = null;
+        resolve();
+      }
+    });
+  });
+}
+
 module.exports = {
   init,
   encrypt,
   decrypt,
   addServer,
   getServers,
-  deleteServer
+  deleteServer,
+  close
 };
