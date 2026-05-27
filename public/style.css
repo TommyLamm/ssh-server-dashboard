@@ -41,6 +41,7 @@ body {
 
 .login-card {
   background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
   padding: 30px;
@@ -51,6 +52,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 15px;
+}
+
+canvas {
+  max-width: 100%;
 }
 
 .input-field {
@@ -194,6 +199,7 @@ body {
 
 .modal-content {
   background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
   padding: 25px;

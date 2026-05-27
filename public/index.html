@@ -11,14 +11,14 @@
 
   <!-- Login Overlay -->
   <div id="loginPage" class="login-container">
-    <div class="login-card">
+    <form class="login-card" onsubmit="event.preventDefault(); login();">
       <h2 style="text-align: center; color: var(--accent-cyan);">Server Dashboard</h2>
       <p style="text-align: center; font-size: 13px; color: var(--text-secondary);">Enter credential configuration to login</p>
-      <input type="text" id="username" class="input-field" placeholder="Username">
-      <input type="password" id="password" class="input-field" placeholder="Password">
-      <button onclick="login()" class="btn">Access Dashboard</button>
+      <input type="text" id="username" class="input-field" placeholder="Username" required>
+      <input type="password" id="password" class="input-field" placeholder="Password" required>
+      <button type="submit" class="btn">Access Dashboard</button>
       <div id="loginError" style="color: var(--accent-red); font-size: 12px; text-align: center;"></div>
-    </div>
+    </form>
   </div>
 
   <!-- Dashboard App -->
@@ -44,7 +44,7 @@
     <main class="main-content">
       <header style="display: flex; justify-content: space-between; align-items: center;">
         <div style="display: flex; align-items: center; gap: 15px;">
-          <button onclick="toggleSidebar()" class="hamburger" style="display: block;">☰</button>
+          <button onclick="toggleSidebar()" class="hamburger">☰</button>
           <div>
             <h1 id="activeServerName">Select a Host Server</h1>
             <p id="activeServerUptime" style="color: var(--text-secondary); font-size: 13px;"></p>
@@ -55,11 +55,11 @@
 
       <!-- Panel Content -->
       <div id="activeServerDetails" style="display: none;">
-        <nav class="tabs">
-          <div id="tab-overview" class="tab active" onclick="switchTab('overview')">Overview</div>
-          <div id="tab-processes" class="tab" onclick="switchTab('processes')">Processes</div>
-          <div id="tab-docker" class="tab" onclick="switchTab('docker')">Docker Containers</div>
-          <div id="tab-logs" class="tab" onclick="switchTab('logs')">System Logs</div>
+        <nav class="tabs" role="tablist">
+          <div id="tab-overview" class="tab active" role="tab" tabindex="0" aria-selected="true" onclick="switchTab('overview')">Overview</div>
+          <div id="tab-processes" class="tab" role="tab" tabindex="0" aria-selected="false" onclick="switchTab('processes')">Processes</div>
+          <div id="tab-docker" class="tab" role="tab" tabindex="0" aria-selected="false" onclick="switchTab('docker')">Docker Containers</div>
+          <div id="tab-logs" class="tab" role="tab" tabindex="0" aria-selected="false" onclick="switchTab('logs')">System Logs</div>
         </nav>
 
         <!-- Tab 1: Overview -->
@@ -116,10 +116,8 @@
               <thead>
                 <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary);">
                   <th style="padding: 10px;">CONTAINER</th>
-                  <th>STATUS</th>
                   <th>CPU %</th>
                   <th>MEM USAGE</th>
-                  <th>ACTIONS</th>
                 </tr>
               </thead>
               <tbody id="dockerList"></tbody>
@@ -145,15 +143,15 @@
 
   <!-- Server Connection Modal -->
   <div id="serverModal" class="modal" style="display: none;">
-    <div class="modal-content">
+    <form class="modal-content" onsubmit="event.preventDefault(); saveServer();">
       <h3 style="margin-bottom: 15px; color: var(--accent-cyan);">Connect New Host Server</h3>
       <div style="display: flex; flex-direction: column; gap: 12px;">
-        <input type="text" id="hostName" class="input-field" placeholder="Server Name (e.g. Production Node)">
+        <input type="text" id="hostName" class="input-field" placeholder="Server Name (e.g. Production Node)" required>
         <div style="display: flex; gap: 10px;">
-          <input type="text" id="hostIp" class="input-field" placeholder="IP Address / Hostname" style="flex-grow: 1;">
-          <input type="number" id="hostPort" class="input-field" placeholder="Port" value="22" style="width: 80px;">
+          <input type="text" id="hostIp" class="input-field" placeholder="IP Address / Hostname" style="flex-grow: 1;" required>
+          <input type="number" id="hostPort" class="input-field" placeholder="Port" value="22" style="width: 80px;" required>
         </div>
-        <input type="text" id="hostUser" class="input-field" placeholder="SSH Username">
+        <input type="text" id="hostUser" class="input-field" placeholder="SSH Username" required>
         
         <select id="hostAuthType" class="input-field" onchange="toggleAuthFields()">
           <option value="password">Password Auth</option>
@@ -164,11 +162,11 @@
         <textarea id="hostPrivateKey" class="input-field" placeholder="Paste Private Key Content" style="height: 100px; display: none; font-family: monospace;"></textarea>
 
         <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
-          <button onclick="closeServerModal()" class="btn" style="background: var(--bg-secondary); color: white;">Cancel</button>
-          <button onclick="saveServer()" class="btn">Save & Connect</button>
+          <button type="button" onclick="closeServerModal()" class="btn" style="background: var(--bg-secondary); color: white;">Cancel</button>
+          <button type="submit" class="btn">Save & Connect</button>
         </div>
       </div>
-    </div>
+    </form>
   </div>
 
   <script src="app.js"></script>
