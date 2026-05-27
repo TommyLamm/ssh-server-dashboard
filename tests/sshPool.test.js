@@ -1,10 +1,16 @@
-const { parseCpu, parseMem, parseDisk, parseProcesses, parseDocker } = require('../src/sshPool');
+const { parseCpu, parseMem, parseDisk, parseProcesses, parseDocker, pool, closeConnection } = require('../src/sshPool');
 
 describe('SSH Command Output Parsers', () => {
   test('parseCpu extracts user+sys percentages', () => {
     const stdout = "%Cpu(s):  5.2 us,  2.1 sy,  0.0 ni, 92.7 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st";
     const res = parseCpu(stdout);
     expect(res).toBeCloseTo(7.3);
+  });
+
+  test('parseCpu ignores non-CPU lines matching regex', () => {
+    const stdout = "Some arbitrary process name with 50.0 id in name\n%Cpu(s):  0.0 us,  0.0 sy,  0.0 ni, 90.0 id,  0.0 wa";
+    const res = parseCpu(stdout);
+    expect(res).toBeCloseTo(10.0);
   });
 
   test('parseMem extracts memory usage accurately', () => {
@@ -40,6 +46,12 @@ Swap:     2147483648   536870912  1610612736`;
     expect(res[0].mount).toBe('/my mount path');
   });
 
+  test('parseDisk handles NaN in used_percent and defaults to 0', () => {
+    const stdout = `/dev/sda1 ext4 100G 40G 60G invalid% /`;
+    const res = parseDisk(stdout);
+    expect(res[0].used_percent).toBe(0);
+  });
+
   test('parseProcesses parses processes columns', () => {
     const stdout = 
 `  PID USER     %CPU %MEM COMMAND
@@ -52,6 +64,16 @@ Swap:     2147483648   536870912  1610612736`;
     expect(res[0].command).toBe('nginx');
   });
 
+  test('parseProcesses handles NaN in numeric fields and defaults to 0', () => {
+    const stdout = 
+`  PID USER     %CPU %MEM COMMAND
+ invalid root      invalid  invalid nginx`;
+    const res = parseProcesses(stdout);
+    expect(res[0].pid).toBe(0);
+    expect(res[0].cpu).toBe(0);
+    expect(res[0].mem).toBe(0);
+  });
+
   test('parseDocker parses line-separated Docker JSON and handles invalid JSON', () => {
     const stdout = 
 `{"ID":"1","Name":"web","Status":"Up"}
@@ -61,5 +83,23 @@ invalid-json-line`;
     expect(res.length).toBe(2);
     expect(res[0].Name).toBe('web');
     expect(res[1].Name).toBe('db');
+  });
+
+  test('closeConnection removes connection from pool and closes it', async () => {
+    const mockConn = { end: jest.fn() };
+    const mockPromise = Promise.resolve(mockConn);
+    
+    // Manually add to pool
+    pool['test-server-id'] = mockPromise;
+    
+    // Call closeConnection
+    closeConnection('test-server-id');
+    
+    // Verify it is removed from pool
+    expect(pool['test-server-id']).toBeUndefined();
+    
+    // Await the promise resolving to verify end() was called
+    await mockPromise;
+    expect(mockConn.end).toHaveBeenCalled();
   });
 });

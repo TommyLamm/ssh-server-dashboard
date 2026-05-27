@@ -1,10 +1,14 @@
 const { Client } = require('ssh2');
 
 function parseCpu(stdout) {
-  const match = stdout.match(/([\d.]+)\s*%?\s*id/);
-  if (match) {
-    const idle = parseFloat(match[1]);
-    return Math.max(0, Math.min(100, 100 - idle));
+  const lines = stdout.split('\n');
+  const cpuLine = lines.find(l => l.trim().startsWith('%Cpu(s):'));
+  if (cpuLine) {
+    const match = cpuLine.match(/([\d.]+)\s*%?\s*id/);
+    if (match) {
+      const idle = parseFloat(match[1]);
+      return Math.max(0, Math.min(100, 100 - idle));
+    }
   }
   return 0.0;
 }
@@ -32,13 +36,17 @@ function parseDisk(stdout) {
     if (!line || line.startsWith('source') || line.trim().startsWith('Filesystem')) return;
     const cols = line.replace(/\s+/g, ' ').trim().split(' ');
     if (cols.length >= 7) {
+      let used_percent = parseInt(cols[5].replace('%', ''), 10);
+      if (isNaN(used_percent)) {
+        used_percent = 0;
+      }
       disks.push({
         device: cols[0],
         fstype: cols[1],
         size: cols[2],
         used: cols[3],
         avail: cols[4],
-        used_percent: parseInt(cols[5].replace('%', ''), 10),
+        used_percent,
         mount: cols.slice(6).join(' ')
       });
     }
@@ -54,11 +62,17 @@ function parseProcesses(stdout) {
     if (!line) continue;
     const cols = line.replace(/\s+/g, ' ').split(' ');
     if (cols.length >= 5) {
+      let pid = parseInt(cols[0], 10);
+      let cpu = parseFloat(cols[2]);
+      let mem = parseFloat(cols[3]);
+      if (isNaN(pid)) pid = 0;
+      if (isNaN(cpu)) cpu = 0.0;
+      if (isNaN(mem)) mem = 0.0;
       processes.push({
-        pid: parseInt(cols[0], 10),
+        pid,
         user: cols[1],
-        cpu: parseFloat(cols[2]),
-        mem: parseFloat(cols[3]),
+        cpu,
+        mem,
         command: cols.slice(4).join(' ')
       });
     }
@@ -113,9 +127,26 @@ function getConnection(server) {
   return promise;
 }
 
+function closeConnection(serverId) {
+  const promise = pool[serverId];
+  if (promise) {
+    delete pool[serverId];
+    promise.then(conn => {
+      try { conn.end(); } catch (e) {}
+    }).catch(() => {});
+  }
+}
+
 function execCommand(conn, cmd) {
   return new Promise((resolve, reject) => {
+    let streamRef = null;
+    let timedOut = false;
+
     const timeoutId = setTimeout(() => {
+      timedOut = true;
+      if (streamRef) {
+        try { streamRef.destroy(); } catch (e) {}
+      }
       reject(new Error(`Command timed out after 15s: ${cmd}`));
     }, 15000);
 
@@ -125,6 +156,11 @@ function execCommand(conn, cmd) {
         clearTimeout(timeoutId);
         return reject(err);
       }
+      if (timedOut) {
+        try { stream.destroy(); } catch (e) {}
+        return;
+      }
+      streamRef = stream;
 
       let stdout = '';
       let stderr = '';
@@ -170,6 +206,7 @@ module.exports = {
   parseProcesses,
   parseDocker,
   getConnection,
+  closeConnection,
   execCommand,
   pool
 };
