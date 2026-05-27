@@ -7,6 +7,7 @@ function parseCpu(stdout) {
     const match = cpuLine.match(/([\d.]+)\s*%?\s*id/);
     if (match) {
       const idle = parseFloat(match[1]);
+      if (isNaN(idle)) return 0.0;
       return Math.max(0, Math.min(100, 100 - idle));
     }
   }
@@ -33,7 +34,7 @@ function parseDisk(stdout) {
   const lines = stdout.trim().split('\n');
   const disks = [];
   lines.forEach(line => {
-    if (!line || line.startsWith('source') || line.trim().startsWith('Filesystem')) return;
+    if (!line || line.trim().startsWith('source') || line.trim().startsWith('Filesystem')) return;
     const cols = line.replace(/\s+/g, ' ').trim().split(' ');
     if (cols.length >= 7) {
       let used_percent = parseInt(cols[5].replace('%', ''), 10);
@@ -86,7 +87,10 @@ function parseDocker(stdout) {
   lines.forEach(line => {
     if (!line) return;
     try {
-      containers.push(JSON.parse(line));
+      const parsed = JSON.parse(line);
+      if (parsed !== null && typeof parsed === 'object') {
+        containers.push(parsed);
+      }
     } catch (e) {
       // Skip invalid JSON
     }
