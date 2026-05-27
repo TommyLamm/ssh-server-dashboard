@@ -61,6 +61,21 @@ describe('Server & WebSocket API', () => {
     jest.clearAllMocks();
   });
 
+  test('should throw error in production if DASHBOARD_SECRET is default or missing', () => {
+    const originalEnv = process.env.NODE_ENV;
+    const originalSecret = process.env.DASHBOARD_SECRET;
+    try {
+      process.env.NODE_ENV = 'production';
+      process.env.DASHBOARD_SECRET = 'fallback-jwt-secret';
+      jest.isolateModules(() => {
+        expect(() => require('../src/server')).toThrow('A secure, non-default DASHBOARD_SECRET environment variable is required in production.');
+      });
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+      process.env.DASHBOARD_SECRET = originalSecret;
+    }
+  });
+
   test('POST /api/login success', async () => {
     const res = await makeRequest('POST', '/api/login', {
       username: 'admin',
@@ -218,6 +233,77 @@ describe('Server & WebSocket API', () => {
         ws.send(JSON.stringify({ type: 'fetch-logs', logPath: '/var/log/syslog', isService: false }));
       } else if (data.type === 'logs') {
         expect(data.logs).toBe('file logs');
+        ws.close();
+      }
+    });
+
+    ws.on('close', () => {
+      done();
+    });
+  });
+
+  test('WebSocket /ws/monitor rejects command injection in fetch-logs', (done) => {
+    const token = jwt.sign({ username: 'admin' }, 'fallback-jwt-secret');
+    const ws = new WebSocket(`ws://localhost:${port}/ws/monitor`);
+
+    db.getServers.mockResolvedValue([
+      { id: 1, name: 'Server 1', host: '1.1.1.1', port: 22, username: 'root', auth_type: 'password' }
+    ]);
+
+    ws.on('open', () => {
+      ws.send(JSON.stringify({ type: 'auth', token }));
+    });
+
+    let step = 0;
+    ws.on('message', (msg) => {
+      const data = JSON.parse(msg);
+      if (data.type === 'authenticated') {
+        ws.send(JSON.stringify({ type: 'select-server', serverId: 1 }));
+      } else if (data.type === 'metrics') {
+        ws.send(JSON.stringify({ type: 'fetch-logs', logPath: '/var/log/syslog; rm -rf /', isService: false }));
+      } else if (data.type === 'error' && step === 0) {
+        expect(data.message).toBe('Invalid log file path');
+        step = 1;
+        ws.send(JSON.stringify({ type: 'fetch-logs', logPath: 'nginx; rm -rf /', isService: true }));
+      } else if (data.type === 'error' && step === 1) {
+        expect(data.message).toBe('Invalid service name');
+        ws.close();
+      }
+    });
+
+    ws.on('close', () => {
+      done();
+    });
+  });
+
+  test('WebSocket /ws/monitor evicts clients when a server is deleted', (done) => {
+    const token = jwt.sign({ username: 'admin' }, 'fallback-jwt-secret');
+    const ws = new WebSocket(`ws://localhost:${port}/ws/monitor`);
+
+    db.getServers.mockResolvedValue([
+      { id: 1, name: 'Server 1', host: '1.1.1.1', port: 22, username: 'root', auth_type: 'password' }
+    ]);
+    const mockConn = {};
+    sshPool.getConnection.mockResolvedValue(mockConn);
+    sshPool.execCommand.mockResolvedValue('');
+
+    ws.on('open', () => {
+      ws.send(JSON.stringify({ type: 'auth', token }));
+    });
+
+    ws.on('message', async (msg) => {
+      const data = JSON.parse(msg);
+      if (data.type === 'authenticated') {
+        ws.send(JSON.stringify({ type: 'select-server', serverId: 1 }));
+      } else if (data.type === 'metrics') {
+        db.deleteServer.mockResolvedValue(1);
+        const res = await makeRequest('DELETE', '/api/servers/1', null, {
+          'Authorization': `Bearer ${token}`
+        });
+        expect(res.status).toBe(200);
+        expect(res.body.success).toBe(true);
+      } else if (data.type === 'error') {
+        expect(data.message).toBe('Server deleted');
         ws.close();
       }
     });

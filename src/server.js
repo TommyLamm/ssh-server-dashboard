@@ -7,7 +7,7 @@ const db = require('./db');
 const sshPool = require('./sshPool');
 
 const app = express();
-expressWs(app);
+const wsInstance = expressWs(app);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
@@ -16,6 +16,11 @@ const PORT = process.env.PORT || 3000;
 const USERNAME = process.env.DASHBOARD_USERNAME || 'admin';
 const PASSWORD = process.env.DASHBOARD_PASSWORD || 'admin';
 const JWT_SECRET = process.env.DASHBOARD_SECRET || 'fallback-jwt-secret';
+
+// Production Safeguard for JWT Secret
+if (process.env.NODE_ENV === 'production' && (!process.env.DASHBOARD_SECRET || process.env.DASHBOARD_SECRET === 'fallback-jwt-secret')) {
+  throw new Error('A secure, non-default DASHBOARD_SECRET environment variable is required in production.');
+}
 
 // Middleware to authenticate JWT
 function authenticate(req, res, next) {
@@ -28,6 +33,17 @@ function authenticate(req, res, next) {
     req.user = user;
     next();
   });
+}
+
+// Safe WebSocket sender helper
+function sendWs(ws, msg) {
+  if (ws.readyState === 1) { // WebSocket.OPEN is 1
+    try {
+      ws.send(JSON.stringify(msg));
+    } catch (err) {
+      console.warn('WebSocket send failed:', err.message);
+    }
+  }
 }
 
 // REST endpoints
@@ -71,6 +87,20 @@ app.delete('/api/servers/:id', authenticate, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     await db.deleteServer(id);
     sshPool.closeConnection(id);
+
+    // Evict all WebSocket clients monitoring this server
+    const wss = wsInstance.getWss();
+    wss.clients.forEach(client => {
+      if (client.activeServerId === id) {
+        sendWs(client, { type: 'error', message: 'Server deleted' });
+        if (client.monitorInterval) {
+          clearInterval(client.monitorInterval);
+          client.monitorInterval = null;
+        }
+        client.activeServerId = null;
+      }
+    });
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -79,7 +109,13 @@ app.delete('/api/servers/:id', authenticate, async (req, res) => {
 
 // WebSocket real-time monitor stream
 app.ws('/ws/monitor', (ws, req) => {
-  let intervalId = null;
+  // Prevent process crashes due to unhandled socket errors
+  ws.on('error', (err) => {
+    console.error('WebSocket client error:', err.message);
+  });
+
+  ws.activeServerId = null;
+  ws.monitorInterval = null;
   let serverInfo = null;
   let authenticated = false;
 
@@ -90,35 +126,39 @@ app.ws('/ws/monitor', (ws, req) => {
       if (data.type === 'auth') {
         jwt.verify(data.token, JWT_SECRET, async (err) => {
           if (err) {
-            ws.send(JSON.stringify({ type: 'error', message: 'Auth failed' }));
+            sendWs(ws, { type: 'error', message: 'Auth failed' });
             return ws.close();
           }
           authenticated = true;
-          ws.send(JSON.stringify({ type: 'authenticated' }));
+          sendWs(ws, { type: 'authenticated' });
         });
         return;
       }
 
       if (!authenticated) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Unauthorized' }));
+        sendWs(ws, { type: 'error', message: 'Unauthorized' });
         return ws.close();
       }
 
       if (data.type === 'select-server') {
-        if (intervalId) {
-          clearInterval(intervalId);
-          intervalId = null;
+        if (ws.monitorInterval) {
+          clearInterval(ws.monitorInterval);
+          ws.monitorInterval = null;
         }
+        ws.activeServerId = null;
 
         const servers = await db.getServers();
         serverInfo = servers.find(s => s.id === parseInt(data.serverId, 10));
 
         if (!serverInfo) {
-          return ws.send(JSON.stringify({ type: 'error', message: 'Server not found' }));
+          return sendWs(ws, { type: 'error', message: 'Server not found' });
         }
+
+        ws.activeServerId = serverInfo.id;
 
         async function fetchMetrics() {
           try {
+            if (ws.activeServerId !== serverInfo.id) return;
             const conn = await sshPool.getConnection(serverInfo);
             
             const [cpuOut, memOut, diskOut, uptimeOut] = await Promise.all([
@@ -133,24 +173,24 @@ app.ws('/ws/monitor', (ws, req) => {
             const disk = sshPool.parseDisk(diskOut);
             const uptime = uptimeOut.trim();
 
-            ws.send(JSON.stringify({
+            sendWs(ws, {
               type: 'metrics',
               serverId: serverInfo.id,
               status: 'online',
               metrics: { cpu, mem, disk, uptime }
-            }));
+            });
           } catch (err) {
-            ws.send(JSON.stringify({
+            sendWs(ws, {
               type: 'metrics',
               serverId: serverInfo.id,
               status: 'offline',
               error: err.message
-            }));
+            });
           }
         }
 
         fetchMetrics();
-        intervalId = setInterval(fetchMetrics, 2000);
+        ws.monitorInterval = setInterval(fetchMetrics, 2000);
       }
 
       if (data.type === 'fetch-processes') {
@@ -158,7 +198,7 @@ app.ws('/ws/monitor', (ws, req) => {
         const conn = await sshPool.getConnection(serverInfo);
         const processesOut = await sshPool.execCommand(conn, "ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n 30");
         const processes = sshPool.parseProcesses(processesOut);
-        ws.send(JSON.stringify({ type: 'processes', processes }));
+        sendWs(ws, { type: 'processes', processes });
       }
 
       if (data.type === 'fetch-docker') {
@@ -167,32 +207,46 @@ app.ws('/ws/monitor', (ws, req) => {
           const conn = await sshPool.getConnection(serverInfo);
           const dockerOut = await sshPool.execCommand(conn, "docker stats --no-stream --format '{\"name\":\"{{.Name}}\",\"cpu\":\"{{.CPUPerc}}\",\"mem\":\"{{.MemUsage}}\"}'");
           const containers = sshPool.parseDocker(dockerOut);
-          ws.send(JSON.stringify({ type: 'docker', containers }));
+          sendWs(ws, { type: 'docker', containers });
         } catch (e) {
-          ws.send(JSON.stringify({ type: 'docker', error: 'Docker daemon unreachable or not installed' }));
+          sendWs(ws, { type: 'docker', error: 'Docker daemon unreachable or not installed' });
         }
       }
 
       if (data.type === 'fetch-logs') {
         if (!serverInfo) return;
+
+        // Validation against command injection
+        const serviceRegex = /^[a-zA-Z0-9_\-@.]*$/;
+        const fileRegex = /^\/[a-zA-Z0-9_\-\/.]*$/;
+        if (data.isService) {
+          if (!data.logPath || !serviceRegex.test(data.logPath)) {
+            return sendWs(ws, { type: 'error', message: 'Invalid service name' });
+          }
+        } else {
+          if (!data.logPath || !fileRegex.test(data.logPath)) {
+            return sendWs(ws, { type: 'error', message: 'Invalid log file path' });
+          }
+        }
+
         const conn = await sshPool.getConnection(serverInfo);
         let logCmd = `tail -n 100 "${data.logPath}"`;
         if (data.isService) {
           logCmd = `journalctl -u "${data.logPath}" -n 100 --no-pager`;
         }
         const logs = await sshPool.execCommand(conn, logCmd);
-        ws.send(JSON.stringify({ type: 'logs', logs }));
+        sendWs(ws, { type: 'logs', logs });
       }
 
     } catch (e) {
-      ws.send(JSON.stringify({ type: 'error', message: e.message }));
+      sendWs(ws, { type: 'error', message: e.message });
     }
   });
 
   ws.on('close', () => {
-    if (intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
+    if (ws.monitorInterval) {
+      clearInterval(ws.monitorInterval);
+      ws.monitorInterval = null;
     }
   });
 });
