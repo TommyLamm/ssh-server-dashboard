@@ -15,7 +15,7 @@ COPY --chown=node:node --from=builder /app/node_modules ./node_modules
 COPY --chown=node:node package*.json ./
 COPY --chown=node:node src/ ./src
 COPY --chown=node:node public/ ./public
-EXPOSE 3000
+EXPOSE 6666
 ENV PORT=3000
 ENV NODE_ENV=production
 ENV DASHBOARD_DB_PATH=/app/data/dashboard.db
