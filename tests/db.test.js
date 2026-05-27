@@ -15,6 +15,8 @@ describe('Database and Encryption Module', () => {
   afterAll(async () => {
     await dbModule.close();
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    const keyPath = path.join(__dirname, 'encryption.key');
+    if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
   });
 
   test('should encrypt and decrypt correctly', () => {

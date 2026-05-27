@@ -4,20 +4,60 @@ const path = require('path');
 const fs = require('fs');
 
 const dbFile = process.env.DASHBOARD_DB_PATH || path.join(__dirname, '../data/dashboard.db');
+const keyFile = path.join(path.dirname(dbFile), 'encryption.key');
 
-const HEX_KEY_REGEX = /^[0-9a-fA-F]{64}$/;
-const rawKey = process.env.ENCRYPTION_KEY;
+function getEncryptionKey() {
+  const HEX_KEY_REGEX = /^[0-9a-fA-F]{64}$/;
+  const rawKey = process.env.ENCRYPTION_KEY;
+  const DEFAULT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
-const DEFAULT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-if (process.env.NODE_ENV === 'production' && (!rawKey || rawKey === DEFAULT_KEY)) {
-  throw new Error('A secure, non-default ENCRYPTION_KEY environment variable is required in production.');
+  if (process.env.NODE_ENV === 'production' && (!rawKey || rawKey === DEFAULT_KEY)) {
+    throw new Error('A secure, non-default ENCRYPTION_KEY environment variable is required in production.');
+  }
+  
+  // 1. If ENCRYPTION_KEY env variable is set, validate and use it
+  if (rawKey) {
+    if (!HEX_KEY_REGEX.test(rawKey)) {
+      throw new Error('ENCRYPTION_KEY must be a 64-character hex string (32 bytes).');
+    }
+    return Buffer.from(rawKey, 'hex');
+  }
+
+  // 2. If DASHBOARD_SECRET is set, derive key using SHA-256
+  if (process.env.DASHBOARD_SECRET) {
+    if (process.env.NODE_ENV === 'production' && process.env.DASHBOARD_SECRET === 'SuperSecretKeyForJWTAuth123!') {
+      throw new Error('A secure, non-default DASHBOARD_SECRET environment variable is required in production.');
+    }
+    return crypto.createHash('sha256').update(process.env.DASHBOARD_SECRET).digest();
+  }
+
+  // 3. Try reading from persistent file
+  try {
+    const dbDir = path.dirname(dbFile);
+    if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+    if (fs.existsSync(keyFile)) {
+      const savedKey = fs.readFileSync(keyFile, 'utf8').trim();
+      if (HEX_KEY_REGEX.test(savedKey)) {
+        return Buffer.from(savedKey, 'hex');
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to read encryption key file:', err.message);
+  }
+
+  // 4. Generate random key and save it
+  const randomKey = crypto.randomBytes(32);
+  try {
+    const dbDir = path.dirname(dbFile);
+    if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+    fs.writeFileSync(keyFile, randomKey.toString('hex'), 'utf8');
+  } catch (err) {
+    console.warn('Failed to save generated encryption key file:', err.message);
+  }
+  return randomKey;
 }
 
-const keyToUse = rawKey || DEFAULT_KEY;
-if (!HEX_KEY_REGEX.test(keyToUse)) {
-  throw new Error('ENCRYPTION_KEY must be a 64-character hex string (32 bytes).');
-}
-const KEY = Buffer.from(keyToUse, 'hex');
+const KEY = getEncryptionKey();
 
 let db = null;
 
@@ -121,6 +161,33 @@ function getServers() {
   });
 }
 
+function updateServer(id, server) {
+  return new Promise((resolve, reject) => {
+    const fields = [];
+    const params = [];
+    
+    if (server.name !== undefined) { fields.push('name = ?'); params.push(server.name); }
+    if (server.host !== undefined) { fields.push('host = ?'); params.push(server.host); }
+    if (server.port !== undefined) { fields.push('port = ?'); params.push(server.port); }
+    if (server.username !== undefined) { fields.push('username = ?'); params.push(server.username); }
+    if (server.auth_type !== undefined) { fields.push('auth_type = ?'); params.push(server.auth_type); }
+    if (server.password !== undefined && server.password !== '') { fields.push('password = ?'); params.push(encrypt(server.password)); }
+    if (server.private_key !== undefined && server.private_key !== '') { fields.push('private_key = ?'); params.push(encrypt(server.private_key)); }
+    
+    if (fields.length === 0) {
+      resolve(0);
+      return;
+    }
+    
+    params.push(id);
+    const sql = `UPDATE servers SET ${fields.join(', ')} WHERE id = ?`;
+    getDb().run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve(this.changes);
+    });
+  });
+}
+
 function deleteServer(id) {
   return new Promise((resolve, reject) => {
     getDb().run(`DELETE FROM servers WHERE id = ?`, [id], function (err) {
@@ -153,6 +220,7 @@ module.exports = {
   decrypt,
   addServer,
   getServers,
+  updateServer,
   deleteServer,
   close
 };
