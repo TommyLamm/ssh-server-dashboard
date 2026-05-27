@@ -155,51 +155,56 @@ function execCommand(conn, cmd) {
     }, 15000);
 
     // Enforce C locale for parsing reliability
-    conn.exec(`export LC_ALL=C; ${cmd}`, (err, stream) => {
-      if (err) {
-        clearTimeout(timeoutId);
-        return reject(err);
-      }
-      if (timedOut) {
-        try { stream.destroy(); } catch (e) {}
-        return;
-      }
-      streamRef = stream;
-
-      let stdout = '';
-      let stderr = '';
-
-      const cleanup = () => {
-        clearTimeout(timeoutId);
-      };
-
-      stream.on('close', (code) => {
-        cleanup();
-        if (code !== 0) {
-          reject(new Error(stderr.trim() || `Exited with code ${code}`));
-        } else {
-          resolve(stdout);
+    try {
+      conn.exec(`export LC_ALL=C; ${cmd}`, (err, stream) => {
+        if (err) {
+          clearTimeout(timeoutId);
+          return reject(err);
         }
-      });
+        if (timedOut) {
+          try { stream.destroy(); } catch (e) {}
+          return;
+        }
+        streamRef = stream;
 
-      stream.on('data', (data) => {
-        stdout += data.toString();
-      });
+        let stdout = '';
+        let stderr = '';
 
-      stream.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
+        const cleanup = () => {
+          clearTimeout(timeoutId);
+        };
 
-      stream.on('error', (err) => {
-        cleanup();
-        reject(err);
-      });
+        stream.on('close', (code) => {
+          cleanup();
+          if (code !== 0) {
+            reject(new Error(stderr.trim() || `Exited with code ${code}`));
+          } else {
+            resolve(stdout);
+          }
+        });
 
-      stream.stderr.on('error', (err) => {
-        cleanup();
-        reject(err);
+        stream.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        stream.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        stream.on('error', (err) => {
+          cleanup();
+          reject(err);
+        });
+
+        stream.stderr.on('error', (err) => {
+          cleanup();
+          reject(err);
+        });
       });
-    });
+    } catch (execErr) {
+      clearTimeout(timeoutId);
+      reject(execErr);
+    }
   });
 }
 
