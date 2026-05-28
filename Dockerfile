@@ -15,8 +15,8 @@ COPY --chown=node:node --from=builder /app/node_modules ./node_modules
 COPY --chown=node:node package*.json ./
 COPY --chown=node:node src/ ./src
 COPY --chown=node:node public/ ./public
-EXPOSE 6666
-ENV PORT=6666
+EXPOSE 6688
+ENV PORT=6688
 ENV NODE_ENV=production
 ENV DASHBOARD_DB_PATH=/app/data/dashboard.db
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

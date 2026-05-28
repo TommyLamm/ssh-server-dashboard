@@ -6,10 +6,10 @@ services:
     image: server-dashboard:latest
     container_name: server-dashboard
     ports:
-      - "6666:6666"
+      - "6688:6688"
     environment:
       - NODE_ENV=production
-      - PORT=6666
+      - PORT=6688
       - DASHBOARD_USERNAME=${DASHBOARD_USERNAME}
       - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD}
       - DASHBOARD_SECRET=${DASHBOARD_SECRET}
