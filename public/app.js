@@ -283,7 +283,10 @@ function updateOverviewMetrics(metrics) {
   document.getElementById('metric-cpu-val').innerText = cpuVal.toFixed(1) + '%';
   cpuHistory.push(cpuVal);
   if (cpuHistory.length > maxHistory) cpuHistory.shift();
-  drawSparkline('cpuSparkline', cpuHistory, '#06b6d4');
+  drawGauge('cpuGauge', cpuVal, '#06b6d4');
+
+  // Render individual CPU cores
+  renderCpuCores(metrics.cores);
 
   // RAM memory usage
   var ramVal = metrics.mem && metrics.mem.percent != null ? metrics.mem.percent : 0;
@@ -293,7 +296,7 @@ function updateOverviewMetrics(metrics) {
   document.getElementById('metric-ram-details').innerText = 'Used: ' + usedGb + ' GB / Total: ' + totalGb + ' GB';
   ramHistory.push(ramVal);
   if (ramHistory.length > maxHistory) ramHistory.shift();
-  drawSparkline('ramSparkline', ramHistory, '#8b5cf6');
+  drawGauge('ramGauge', ramVal, '#8b5cf6');
 
   // Storage usage
   if (metrics.disk && metrics.disk.length > 0) {
@@ -303,7 +306,66 @@ function updateOverviewMetrics(metrics) {
     document.getElementById('metric-disk-details').innerText = 'Avail: ' + root.avail + ' / Total: ' + root.size + ' on ' + root.mount;
     diskHistory.push(diskVal);
     if (diskHistory.length > maxHistory) diskHistory.shift();
-    drawSparkline('diskSparkline', diskHistory, '#eab308');
+    drawGauge('diskGauge', diskVal, '#eab308');
+  }
+}
+
+function renderCpuCores(cores) {
+  var grid = document.getElementById('cpuCoresList');
+  if (!grid) return;
+
+  if (!cores || cores.length === 0) {
+    grid.innerHTML = '';
+    grid.style.display = 'none';
+    return;
+  }
+
+  grid.style.display = 'grid';
+
+  var existingCount = grid.children.length;
+  if (existingCount !== cores.length) {
+    grid.innerHTML = '';
+    cores.forEach(function (val, idx) {
+      var card = document.createElement('div');
+      card.className = 'cpu-core-item';
+      card.id = 'cpu-core-' + idx;
+
+      var labelRow = document.createElement('div');
+      labelRow.className = 'cpu-core-label-row';
+
+      var nameEl = document.createElement('strong');
+      nameEl.textContent = 'C' + idx;
+
+      var valEl = document.createElement('span');
+      valEl.className = 'cpu-core-val';
+      valEl.textContent = val.toFixed(0) + '%';
+
+      labelRow.appendChild(nameEl);
+      labelRow.appendChild(valEl);
+
+      var barBg = document.createElement('div');
+      barBg.className = 'cpu-core-bar-bg';
+
+      var barFg = document.createElement('div');
+      barFg.className = 'cpu-core-bar-fg';
+      barFg.style.width = val.toFixed(0) + '%';
+
+      barBg.appendChild(barFg);
+      card.appendChild(labelRow);
+      card.appendChild(barBg);
+      grid.appendChild(card);
+    });
+  } else {
+    cores.forEach(function (val, idx) {
+      var card = document.getElementById('cpu-core-' + idx);
+      if (card) {
+        var valEl = card.querySelector('.cpu-core-val');
+        if (valEl) valEl.textContent = val.toFixed(0) + '%';
+
+        var barFg = card.querySelector('.cpu-core-bar-fg');
+        if (barFg) barFg.style.width = val.toFixed(0) + '%';
+      }
+    });
   }
 }
 
@@ -311,20 +373,172 @@ function drawSparkline(canvasId, history, color) {
   var canvas = document.getElementById(canvasId);
   if (!canvas) return;
   var ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // Make high-DPI crisp
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  
+  var width = rect.width;
+  var height = rect.height;
+  ctx.clearRect(0, 0, width, height);
 
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
+  if (history.length === 0) return;
+
+  var step = width / (maxHistory - 1);
+  
+  // 1. Draw the gradient fill
   ctx.beginPath();
-
-  var step = canvas.width / (maxHistory - 1);
   history.forEach(function (val, index) {
     var x = index * step;
-    var y = canvas.height - (val / 100) * canvas.height;
+    var valClamped = Math.max(0, Math.min(100, val));
+    var y = height - (valClamped / 100) * (height - 6) - 3; // leave padding top/bottom
     if (index === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
+  var lastX = (history.length - 1) * step;
+  ctx.lineTo(lastX, height);
+  ctx.lineTo(0, height);
+  ctx.closePath();
+  
+  var fillGrad = ctx.createLinearGradient(0, 0, 0, height);
+  var rgb = hexToRgb(color);
+  fillGrad.addColorStop(0, 'rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ', 0.25)');
+  fillGrad.addColorStop(1, 'rgba(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ', 0)');
+  ctx.fillStyle = fillGrad;
+  ctx.fill();
+
+  // 2. Draw the stroke line
+  ctx.beginPath();
+  history.forEach(function (val, index) {
+    var x = index * step;
+    var valClamped = Math.max(0, Math.min(100, val));
+    var y = height - (valClamped / 100) * (height - 6) - 3;
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
   ctx.stroke();
+
+  // 3. Draw a glowing point at the last value
+  if (history.length > 0) {
+    var lastVal = history[history.length - 1];
+    var finalX = (history.length - 1) * step;
+    var finalY = height - (Math.max(0, Math.min(100, lastVal)) / 100) * (height - 6) - 3;
+    ctx.beginPath();
+    ctx.arc(finalX - 1.5, finalY, 3.5, 0, 2 * Math.PI);
+    ctx.fillStyle = color;
+    ctx.shadowBlur = 6;
+    ctx.shadowColor = color;
+    ctx.fill();
+    ctx.shadowBlur = 0; // reset shadow
+  }
+}
+
+function hexToRgb(hex) {
+  var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+  hex = hex.replace(shorthandRegex, function(m, r, g, b) {
+    return r + r + g + g + b + b;
+  });
+  var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  } : { r: 0, g: 0, b: 0 };
+}
+
+function drawGauge(canvasId, value, color) {
+  var canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+
+  // Clear shadow properties
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = 'transparent';
+
+  // High-DPI handling
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+
+  var width = rect.width;
+  var height = rect.height;
+  ctx.clearRect(0, 0, width, height);
+
+  var cx = width / 2;
+  var cy = height / 2;
+  var radius = Math.min(width, height) / 2 - 10;
+
+  // Gauge arc spanning from 0.75 * Math.PI to 2.25 * Math.PI (270 degrees)
+  var startAngle = 0.75 * Math.PI;
+  var totalAngle = 1.5 * Math.PI;
+  var valueAngle = startAngle + (Math.max(0, Math.min(100, value)) / 100) * totalAngle;
+
+  // 1. Draw outer thin background ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius + 4, startAngle, startAngle + totalAngle);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // 2. Draw background track
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, startAngle, startAngle + totalAngle);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+  ctx.lineWidth = 8;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // 3. Draw dashed inner styling ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius - 8, startAngle, startAngle + totalAngle);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 4]);
+  ctx.stroke();
+  ctx.setLineDash([]); // reset dash
+
+  // 4. Draw active track gradient
+  if (value > 0) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, startAngle, valueAngle);
+    
+    var grad = ctx.createLinearGradient(cx - radius, cy + radius, cx + radius, cy - radius);
+    var rgb = hexToRgb(color);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, 'rgba(' + Math.min(255, rgb.r + 50) + ',' + Math.max(0, rgb.g - 30) + ',' + Math.min(255, rgb.b + 50) + ', 1)');
+    
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 8;
+    ctx.lineCap = 'round';
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = color;
+    ctx.stroke();
+    ctx.shadowBlur = 0; // reset
+  }
+
+  // 5. Draw indicator dot at the end value
+  if (value > 0) {
+    var endX = cx + radius * Math.cos(valueAngle);
+    var endY = cy + radius * Math.sin(valueAngle);
+    ctx.beginPath();
+    ctx.arc(endX, endY, 4, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = color;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
 }
 
 // ====== Tabs ======

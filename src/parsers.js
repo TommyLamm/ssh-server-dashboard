@@ -1,14 +1,81 @@
 function parseCpu(stdout) {
-  const lines = stdout.split('\n');
-  const cpuLine = lines.find(l => l.trim().startsWith('%Cpu(s):'));
-  if (cpuLine) {
-    const match = cpuLine.match(/([\d.]+)\s*%?\s*id/);
-    if (match) {
-      const idle = parseFloat(match[1]);
-      if (isNaN(idle)) return 0.0;
-      return Math.max(0, Math.min(100, 100 - idle));
+  if (stdout.includes('%Cpu(s):')) {
+    const lines = stdout.split('\n');
+    const cpuLine = lines.find(l => l.trim().startsWith('%Cpu(s):'));
+    if (cpuLine) {
+      const match = cpuLine.match(/([\d.]+)\s*%?\s*id/);
+      if (match) {
+        const idle = parseFloat(match[1]);
+        if (isNaN(idle)) return 0.0;
+        return Math.max(0, Math.min(100, 100 - idle));
+      }
     }
+    return 0.0;
   }
+
+  if (/^cpu\s+\d/m.test(stdout)) {
+    const lines = stdout.split('\n');
+    const cpuStats = {};
+    
+    lines.forEach(line => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('cpu')) {
+        const parts = trimmed.split(/\s+/);
+        const name = parts[0];
+        const values = parts.slice(1).map(Number);
+        if (!cpuStats[name]) {
+          cpuStats[name] = [];
+        }
+        cpuStats[name].push(values);
+      }
+    });
+
+    const results = {
+      overall: 0.0,
+      cores: []
+    };
+
+    const coreNames = Object.keys(cpuStats).filter(name => name !== 'cpu').sort((a, b) => {
+      const numA = parseInt(a.replace('cpu', ''), 10);
+      const numB = parseInt(b.replace('cpu', ''), 10);
+      return numA - numB;
+    });
+
+    if (cpuStats['cpu'] && cpuStats['cpu'].length >= 2) {
+      const v1 = cpuStats['cpu'][0];
+      const v2 = cpuStats['cpu'][1];
+      const total1 = v1.reduce((a, b) => a + b, 0);
+      const total2 = v2.reduce((a, b) => a + b, 0);
+      const diffTotal = total2 - total1;
+      const idle1 = v1[3] + (v1[4] || 0);
+      const idle2 = v2[3] + (v2[4] || 0);
+      const diffIdle = idle2 - idle1;
+      if (diffTotal > 0) {
+        results.overall = Math.max(0, Math.min(100, 100 * (1 - diffIdle / diffTotal)));
+      }
+    }
+
+    coreNames.forEach(name => {
+      if (cpuStats[name] && cpuStats[name].length >= 2) {
+        const v1 = cpuStats[name][0];
+        const v2 = cpuStats[name][1];
+        const total1 = v1.reduce((a, b) => a + b, 0);
+        const total2 = v2.reduce((a, b) => a + b, 0);
+        const diffTotal = total2 - total1;
+        const idle1 = v1[3] + (v1[4] || 0);
+        const idle2 = v2[3] + (v2[4] || 0);
+        const diffIdle = idle2 - idle1;
+        if (diffTotal > 0) {
+          results.cores.push(Math.max(0, Math.min(100, 100 * (1 - diffIdle / diffTotal))));
+        } else {
+          results.cores.push(0.0);
+        }
+      }
+    });
+
+    return results;
+  }
+
   return 0.0;
 }
 

@@ -33,6 +33,23 @@ describe('SSH Module', () => {
       const stdout = "%Cpu(s):  0.0 us,  0.0 sy,  0.0 ni, 100.0 id";
       expect(parseCpu(stdout)).toBe(0);
     });
+
+    test('parses /proc/stat double snapshots and extracts overall and core-specific CPU usage', () => {
+      const stdout = 
+`cpu  100 0 100 800 0 0 0 0 0 0
+cpu0 50 0 50 400 0 0 0 0 0 0
+cpu1 50 0 50 400 0 0 0 0 0 0
+Some intermediate system stats output here...
+cpu  110 0 110 880 0 0 0 0 0 0
+cpu0 55 0 55 440 0 0 0 0 0 0
+cpu1 55 0 55 440 0 0 0 0 0 0`;
+      
+      const res = parseCpu(stdout);
+      expect(res.overall).toBeCloseTo(20);
+      expect(res.cores.length).toBe(2);
+      expect(res.cores[0]).toBeCloseTo(20);
+      expect(res.cores[1]).toBeCloseTo(20);
+    });
   });
 
   describe('parseMem', () => {

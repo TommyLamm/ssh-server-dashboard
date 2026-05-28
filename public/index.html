@@ -7,14 +7,14 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
   <title>Linux Server Status Dashboard</title>
   <link rel="stylesheet" href="style.css">
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=Share+Tech+Mono&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
 
   <!-- Login Overlay -->
   <div id="loginPage" class="login-container">
     <form class="login-card" onsubmit="event.preventDefault(); login();">
-      <h2 class="login-title">Server Dashboard</h2>
+      <h2 class="login-title">⚡ SYS_CONTROL</h2>
       <p class="login-subtitle">Enter credential configuration to login</p>
       <label for="username" class="sr-only">Username</label>
       <input type="text" id="username" class="input-field" placeholder="Username" autocomplete="username" required>
@@ -34,7 +34,7 @@
     <aside id="sidebar" class="sidebar">
       <div>
         <div class="sidebar-header">
-          <h2 class="sidebar-title">📊 Dashboard</h2>
+          <h2 class="sidebar-title">📡 SYS.MONITOR</h2>
           <button id="btnCloseSidebar" onclick="toggleSidebar()" class="hamburger" aria-label="Close sidebar">✕</button>
         </div>
         <button id="btnAddServer" onclick="openServerModal()" class="btn btn-full-width">+ Add Host Server</button>
@@ -69,7 +69,7 @@
       <!-- Loading Indicator -->
       <div id="loadingIndicator" class="loading-indicator" style="display: none;">
         <div class="loading-spinner"></div>
-        <span>Connecting to server…</span>
+        <span>Establishing remote shell connection…</span>
       </div>
 
       <!-- Panel Content -->
@@ -84,27 +84,40 @@
         <!-- Tab 1: Overview -->
         <section id="panel-overview" class="tab-panel" role="tabpanel" aria-labelledby="tab-overview">
           <div class="grid-metrics">
-            <div class="metric-card">
+            <div class="metric-card metric-card-gauge">
               <h3>CPU Utilization</h3>
-              <h1 id="metric-cpu-val" class="metric-value metric-value-cyan">0.0%</h1>
-              <div class="sparkline-container">
-                <canvas id="cpuSparkline" width="300" height="40"></canvas>
+              <div class="gauge-outer">
+                <div class="gauge-container">
+                  <canvas id="cpuGauge" width="160" height="160"></canvas>
+                  <div class="gauge-content">
+                    <span id="metric-cpu-val" class="metric-value metric-value-cyan">0.0%</span>
+                  </div>
+                </div>
+                <div id="cpuCoresList" class="cpu-cores-grid"></div>
               </div>
             </div>
-            <div class="metric-card">
+            <div class="metric-card metric-card-gauge">
               <h3>Memory (RAM)</h3>
-              <h1 id="metric-ram-val" class="metric-value metric-value-purple">0.0%</h1>
-              <p id="metric-ram-details" class="metric-details"></p>
-              <div class="sparkline-container">
-                <canvas id="ramSparkline" width="300" height="40"></canvas>
+              <div class="gauge-outer">
+                <div class="gauge-container">
+                  <canvas id="ramGauge" width="160" height="160"></canvas>
+                  <div class="gauge-content">
+                    <span id="metric-ram-val" class="metric-value metric-value-purple">0.0%</span>
+                  </div>
+                </div>
+                <p id="metric-ram-details" class="metric-details"></p>
               </div>
             </div>
-            <div class="metric-card">
+            <div class="metric-card metric-card-gauge">
               <h3>Primary Storage (/)</h3>
-              <h1 id="metric-disk-val" class="metric-value metric-value-yellow">0%</h1>
-              <p id="metric-disk-details" class="metric-details"></p>
-              <div class="sparkline-container">
-                <canvas id="diskSparkline" width="300" height="40"></canvas>
+              <div class="gauge-outer">
+                <div class="gauge-container">
+                  <canvas id="diskGauge" width="160" height="160"></canvas>
+                  <div class="gauge-content">
+                    <span id="metric-disk-val" class="metric-value metric-value-yellow">0%</span>
+                  </div>
+                </div>
+                <p id="metric-disk-details" class="metric-details"></p>
               </div>
             </div>
           </div>

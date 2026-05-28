@@ -274,13 +274,15 @@ app.ws('/ws/monitor', (ws, req) => {
             const conn = await sshPool.getConnection(serverInfo);
             
             const [cpuOut, memOut, diskOut, uptimeOut] = await Promise.all([
-              sshPool.execCommand(conn, "top -bn1 | grep 'Cpu(s)'"),
+              sshPool.execCommand(conn, "cat /proc/stat; sleep 0.5; cat /proc/stat"),
               sshPool.execCommand(conn, "free -b"),
               sshPool.execCommand(conn, "df -h --output=source,fstype,size,used,avail,pcent,target -x tmpfs -x devtmpfs"),
               sshPool.execCommand(conn, "uptime -p")
             ]);
 
-            const cpu = sshPool.parseCpu(cpuOut);
+            const cpuData = sshPool.parseCpu(cpuOut);
+            const cpu = typeof cpuData === 'object' && cpuData !== null ? cpuData.overall : cpuData;
+            const cpuCores = typeof cpuData === 'object' && cpuData !== null ? cpuData.cores : [];
             const mem = sshPool.parseMem(memOut);
             const disk = sshPool.parseDisk(diskOut);
             const uptime = uptimeOut.trim();
@@ -291,7 +293,7 @@ app.ws('/ws/monitor', (ws, req) => {
               type: 'metrics',
               serverId: serverInfo.id,
               status: 'online',
-              metrics: { cpu, mem, disk, uptime }
+              metrics: { cpu, cores: cpuCores, mem, disk, uptime }
             });
           } catch (err) {
             if (currentSessionId !== activeSessionId) return;
