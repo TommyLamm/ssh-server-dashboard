@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "jest",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "docker:build": "docker build -t server-dashboard .",
+    "docker:run": "docker run -it --rm -p 6688:6688 --env-file .env server-dashboard"
   },
   "dependencies": {
     "cors": "^2.8.6",

@@ -193,6 +193,7 @@ function connectWebSocket() {
           details.classList.remove('active-server-details-hidden');
           document.getElementById('activeServerUptime').innerText = 'Uptime: ' + data.metrics.uptime;
           updateOverviewMetrics(data.metrics);
+          triggerTabFetch();
         } else {
           document.getElementById('activeServerUptime').innerText = 'Offline: ' + data.error;
         }
