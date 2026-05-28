@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Multi-Server Linux Status Monitoring Dashboard">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
   <title>Linux Server Status Dashboard</title>
   <link rel="stylesheet" href="style.css">
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
@@ -12,79 +14,96 @@
   <!-- Login Overlay -->
   <div id="loginPage" class="login-container">
     <form class="login-card" onsubmit="event.preventDefault(); login();">
-      <h2 style="text-align: center; color: var(--accent-cyan);">Server Dashboard</h2>
-      <p style="text-align: center; font-size: 13px; color: var(--text-secondary);">Enter credential configuration to login</p>
-      <input type="text" id="username" class="input-field" placeholder="Username" required>
-      <input type="password" id="password" class="input-field" placeholder="Password" required>
+      <h2 class="login-title">Server Dashboard</h2>
+      <p class="login-subtitle">Enter credential configuration to login</p>
+      <label for="username" class="sr-only">Username</label>
+      <input type="text" id="username" class="input-field" placeholder="Username" autocomplete="username" required>
+      <label for="password" class="sr-only">Password</label>
+      <input type="password" id="password" class="input-field" placeholder="Password" autocomplete="current-password" required>
       <button type="submit" class="btn">Access Dashboard</button>
-      <div id="loginError" style="color: var(--accent-red); font-size: 12px; text-align: center;"></div>
+      <div id="loginError" class="login-error"></div>
     </form>
   </div>
 
   <!-- Dashboard App -->
-  <div id="dashboardApp" class="dashboard-container" style="display: none;">
+  <div id="dashboardApp" class="dashboard-container dashboard-hidden">
+    <!-- Sidebar Backdrop (mobile) -->
+    <div id="sidebarBackdrop" class="sidebar-backdrop" onclick="toggleSidebar()"></div>
+
     <!-- Collapsible Sidebar -->
     <aside id="sidebar" class="sidebar">
       <div>
-        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
-          <h2 style="color: var(--accent-cyan); font-size: 20px;">📊 Dashboard</h2>
-          <button onclick="toggleSidebar()" class="hamburger">✕</button>
+        <div class="sidebar-header">
+          <h2 class="sidebar-title">📊 Dashboard</h2>
+          <button id="btnCloseSidebar" onclick="toggleSidebar()" class="hamburger" aria-label="Close sidebar">✕</button>
         </div>
-        <button onclick="openServerModal()" class="btn" style="width: 100%;">+ Add Host Server</button>
+        <button id="btnAddServer" onclick="openServerModal()" class="btn btn-full-width">+ Add Host Server</button>
         
-        <div id="serverList" style="margin-top: 20px;"></div>
+        <div id="serverList" class="server-list"></div>
       </div>
       <div>
-        <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px;" id="loginUserInfo">Logged in as admin</div>
-        <button onclick="logout()" class="btn" style="background: var(--accent-red); color: white; width: 100%;">Log Out</button>
+        <div class="login-user-info" id="loginUserInfo">Logged in as admin</div>
+        <button id="btnLogout" onclick="logout()" class="btn btn-danger btn-full-width">Log Out</button>
       </div>
     </aside>
 
     <!-- Main Workspace -->
     <main class="main-content">
-      <header style="display: flex; justify-content: space-between; align-items: center;">
-        <div style="display: flex; align-items: center; gap: 15px;">
-          <button onclick="toggleSidebar()" class="hamburger">☰</button>
+      <header class="main-header">
+        <div class="header-left">
+          <button id="btnOpenSidebar" onclick="toggleSidebar()" class="hamburger" aria-label="Open sidebar">☰</button>
           <div>
             <h1 id="activeServerName">Select a Host Server</h1>
-            <p id="activeServerUptime" style="color: var(--text-secondary); font-size: 13px;"></p>
+            <p id="activeServerUptime" class="uptime-text"></p>
           </div>
         </div>
-        <button id="btnDeleteServer" onclick="deleteActiveServer()" class="btn" style="background: var(--accent-red); color: white; display: none;">Delete Server</button>
+        <div class="header-right">
+          <div id="wsStatus" class="ws-status disconnected" title="WebSocket: disconnected">
+            <span class="ws-status-dot"></span>
+            <span class="ws-status-label">Disconnected</span>
+          </div>
+          <button id="btnDeleteServer" onclick="deleteActiveServer()" class="btn btn-danger btn-delete-server">Delete Server</button>
+        </div>
       </header>
 
+      <!-- Loading Indicator -->
+      <div id="loadingIndicator" class="loading-indicator" style="display: none;">
+        <div class="loading-spinner"></div>
+        <span>Connecting to server…</span>
+      </div>
+
       <!-- Panel Content -->
-      <div id="activeServerDetails" style="display: none;">
+      <div id="activeServerDetails" class="active-server-details-hidden">
         <nav class="tabs" role="tablist">
-          <div id="tab-overview" class="tab active" role="tab" tabindex="0" aria-selected="true" onclick="switchTab('overview')">Overview</div>
-          <div id="tab-processes" class="tab" role="tab" tabindex="0" aria-selected="false" onclick="switchTab('processes')">Processes</div>
-          <div id="tab-docker" class="tab" role="tab" tabindex="0" aria-selected="false" onclick="switchTab('docker')">Docker Containers</div>
-          <div id="tab-logs" class="tab" role="tab" tabindex="0" aria-selected="false" onclick="switchTab('logs')">System Logs</div>
+          <button id="tab-overview" class="tab active" role="tab" tabindex="0" aria-selected="true" aria-controls="panel-overview" onclick="switchTab('overview')">Overview</button>
+          <button id="tab-processes" class="tab" role="tab" tabindex="0" aria-selected="false" aria-controls="panel-processes" onclick="switchTab('processes')">Processes</button>
+          <button id="tab-docker" class="tab" role="tab" tabindex="0" aria-selected="false" aria-controls="panel-docker" onclick="switchTab('docker')">Docker Containers</button>
+          <button id="tab-logs" class="tab" role="tab" tabindex="0" aria-selected="false" aria-controls="panel-logs" onclick="switchTab('logs')">System Logs</button>
         </nav>
 
         <!-- Tab 1: Overview -->
-        <section id="panel-overview" class="tab-panel">
+        <section id="panel-overview" class="tab-panel" role="tabpanel" aria-labelledby="tab-overview">
           <div class="grid-metrics">
             <div class="metric-card">
               <h3>CPU Utilization</h3>
-              <h1 id="metric-cpu-val" style="color: var(--accent-cyan); font-size: 36px; margin: 10px 0;">0.0%</h1>
-              <div style="height: 40px;">
+              <h1 id="metric-cpu-val" class="metric-value metric-value-cyan">0.0%</h1>
+              <div class="sparkline-container">
                 <canvas id="cpuSparkline" width="300" height="40"></canvas>
               </div>
             </div>
             <div class="metric-card">
               <h3>Memory (RAM)</h3>
-              <h1 id="metric-ram-val" style="color: var(--accent-purple); font-size: 36px; margin: 10px 0;">0.0%</h1>
-              <p id="metric-ram-details" style="font-size: 12px; color: var(--text-secondary);"></p>
-              <div style="height: 40px;">
+              <h1 id="metric-ram-val" class="metric-value metric-value-purple">0.0%</h1>
+              <p id="metric-ram-details" class="metric-details"></p>
+              <div class="sparkline-container">
                 <canvas id="ramSparkline" width="300" height="40"></canvas>
               </div>
             </div>
             <div class="metric-card">
               <h3>Primary Storage (/)</h3>
-              <h1 id="metric-disk-val" style="color: var(--accent-yellow); font-size: 36px; margin: 10px 0;">0%</h1>
-              <p id="metric-disk-details" style="font-size: 12px; color: var(--text-secondary);"></p>
-              <div style="height: 40px;">
+              <h1 id="metric-disk-val" class="metric-value metric-value-yellow">0%</h1>
+              <p id="metric-disk-details" class="metric-details"></p>
+              <div class="sparkline-container">
                 <canvas id="diskSparkline" width="300" height="40"></canvas>
               </div>
             </div>
@@ -92,15 +111,19 @@
         </section>
 
         <!-- Tab 2: Processes -->
-        <section id="panel-processes" class="tab-panel" style="display: none;">
-          <div style="overflow-x: auto; background: var(--bg-secondary); padding: 15px; border-radius: 8px;">
-            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+        <section id="panel-processes" class="tab-panel tab-panel-hidden" role="tabpanel" aria-labelledby="tab-processes">
+          <div class="process-filter-bar">
+            <label for="processFilter" class="sr-only">Filter processes by command</label>
+            <input type="text" id="processFilter" class="input-field process-filter-input" placeholder="Filter processes by command…">
+          </div>
+          <div class="table-wrapper">
+            <table class="data-table">
               <thead>
-                <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary);">
-                  <th style="padding: 10px; cursor: pointer;" onclick="toggleProcessSort('pid')">PID ⇅</th>
-                  <th style="cursor: pointer;" onclick="toggleProcessSort('user')">USER ⇅</th>
-                  <th style="cursor: pointer;" onclick="toggleProcessSort('cpu')">CPU % ⇅</th>
-                  <th style="cursor: pointer;" onclick="toggleProcessSort('mem')">MEM % ⇅</th>
+                <tr class="table-header-row">
+                  <th class="table-header-cell sortable" onclick="toggleProcessSort('pid')">PID ⇅</th>
+                  <th class="sortable" onclick="toggleProcessSort('user')">USER ⇅</th>
+                  <th class="sortable" onclick="toggleProcessSort('cpu')">CPU % ⇅</th>
+                  <th class="sortable" onclick="toggleProcessSort('mem')">MEM % ⇅</th>
                   <th>COMMAND</th>
                 </tr>
               </thead>
@@ -110,12 +133,12 @@
         </section>
 
         <!-- Tab 3: Docker Containers -->
-        <section id="panel-docker" class="tab-panel" style="display: none;">
-          <div style="background: var(--bg-secondary); padding: 15px; border-radius: 8px;">
-            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+        <section id="panel-docker" class="tab-panel tab-panel-hidden" role="tabpanel" aria-labelledby="tab-docker">
+          <div class="table-wrapper">
+            <table class="data-table">
               <thead>
-                <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-secondary);">
-                  <th style="padding: 10px;">CONTAINER</th>
+                <tr class="table-header-row">
+                  <th class="table-header-cell">CONTAINER</th>
                   <th>CPU %</th>
                   <th>MEM USAGE</th>
                 </tr>
@@ -126,48 +149,60 @@
         </section>
 
         <!-- Tab 4: Logs -->
-        <section id="panel-logs" class="tab-panel" style="display: none;">
-          <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-            <select id="logSourceType" class="input-field" style="width: 150px;" onchange="updateLogPlaceholder()">
+        <section id="panel-logs" class="tab-panel tab-panel-hidden" role="tabpanel" aria-labelledby="tab-logs">
+          <div class="log-controls">
+            <label for="logSourceType" class="sr-only">Log source type</label>
+            <select id="logSourceType" class="input-field log-source-select" onchange="updateLogPlaceholder()">
               <option value="service">Systemd Service</option>
               <option value="file">Log File Path</option>
             </select>
+            <label for="logPath" class="sr-only">Log path</label>
             <input type="text" id="logPath" class="input-field" placeholder="e.g. nginx">
-            <button onclick="fetchLogs()" class="btn">Stream Logs</button>
+            <button id="btnStreamLogs" onclick="fetchLogs()" class="btn">Stream Logs</button>
           </div>
-          <pre id="logConsole" style="background: #000; border: 1px solid var(--border-color); padding: 20px; border-radius: 8px; max-height: 400px; overflow-y: auto; color: #00ff00; font-family: monospace; font-size: 12px;"></pre>
+          <pre id="logConsole" class="log-console"></pre>
         </section>
       </div>
     </main>
   </div>
 
   <!-- Server Connection Modal -->
-  <div id="serverModal" class="modal" style="display: none;">
+  <div id="serverModal" class="modal modal-hidden">
     <form class="modal-content" onsubmit="event.preventDefault(); saveServer();">
-      <h3 style="margin-bottom: 15px; color: var(--accent-cyan);">Connect New Host Server</h3>
-      <div style="display: flex; flex-direction: column; gap: 12px;">
+      <h3 class="modal-title">Connect New Host Server</h3>
+      <div class="modal-form-body">
+        <label for="hostName" class="sr-only">Server name</label>
         <input type="text" id="hostName" class="input-field" placeholder="Server Name (e.g. Production Node)" required>
-        <div style="display: flex; gap: 10px;">
-          <input type="text" id="hostIp" class="input-field" placeholder="IP Address / Hostname" style="flex-grow: 1;" required>
-          <input type="number" id="hostPort" class="input-field" placeholder="Port" value="22" style="width: 80px;" required>
+        <div class="modal-row">
+          <label for="hostIp" class="sr-only">IP address or hostname</label>
+          <input type="text" id="hostIp" class="input-field modal-input-grow" placeholder="IP Address / Hostname" required>
+          <label for="hostPort" class="sr-only">Port</label>
+          <input type="number" id="hostPort" class="input-field modal-input-port" placeholder="Port" value="22" required>
         </div>
+        <label for="hostUser" class="sr-only">SSH username</label>
         <input type="text" id="hostUser" class="input-field" placeholder="SSH Username" required>
         
+        <label for="hostAuthType" class="sr-only">Authentication type</label>
         <select id="hostAuthType" class="input-field" onchange="toggleAuthFields()">
           <option value="password">Password Auth</option>
           <option value="key">Private Key Auth</option>
         </select>
 
+        <label for="hostPassword" class="sr-only">SSH password</label>
         <input type="password" id="hostPassword" class="input-field" placeholder="SSH Password">
-        <textarea id="hostPrivateKey" class="input-field" placeholder="Paste Private Key Content" style="height: 100px; display: none; font-family: monospace;"></textarea>
+        <label for="hostPrivateKey" class="sr-only">Private key</label>
+        <textarea id="hostPrivateKey" class="input-field modal-textarea-key" placeholder="Paste Private Key Content"></textarea>
 
-        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
-          <button type="button" onclick="closeServerModal()" class="btn" style="background: var(--bg-secondary); color: white;">Cancel</button>
-          <button type="submit" class="btn">Save & Connect</button>
+        <div class="modal-actions">
+          <button type="button" id="btnCancelModal" onclick="closeServerModal()" class="btn btn-secondary">Cancel</button>
+          <button type="submit" class="btn">Save &amp; Connect</button>
         </div>
       </div>
     </form>
   </div>
+
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
 
   <script src="app.js"></script>
 </body>

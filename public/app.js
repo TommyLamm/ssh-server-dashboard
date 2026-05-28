@@ -14,16 +14,57 @@ let currentProcesses = [];
 let sortField = 'cpu';
 let sortDesc = true;
 
+// WebSocket reconnect state
+let reconnectAttempts = 0;
+const MAX_RECONNECT_DELAY = 30000;
+
+// Process filter state
+let processFilterText = '';
+
+// ====== Toast notifications ======
+function showToast(message, type) {
+  type = type || 'info';
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = 'toast toast-' + type;
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  setTimeout(function () {
+    toast.classList.add('toast-dismiss');
+    toast.addEventListener('animationend', function () {
+      toast.remove();
+    });
+  }, 4000);
+}
+
+// ====== WebSocket status indicator ======
+function updateWsStatus(state) {
+  var el = document.getElementById('wsStatus');
+  if (!el) return;
+  el.className = 'ws-status ' + state;
+  el.title = 'WebSocket: ' + state;
+  var label = el.querySelector('.ws-status-label');
+  if (label) {
+    label.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+  }
+}
+
+// ====== Auth ======
 function checkAuth() {
   if (token) {
     document.getElementById('loginPage').style.display = 'none';
-    document.getElementById('dashboardApp').style.display = 'flex';
+    var dash = document.getElementById('dashboardApp');
+    dash.style.display = 'flex';
+    dash.classList.remove('dashboard-hidden');
     document.getElementById('loginUserInfo').innerText = 'Logged in as admin';
     loadServers();
     connectWebSocket();
   } else {
     document.getElementById('loginPage').style.display = 'flex';
-    document.getElementById('dashboardApp').style.display = 'none';
+    var dash = document.getElementById('dashboardApp');
+    dash.style.display = 'none';
+    dash.classList.add('dashboard-hidden');
   }
 }
 
@@ -56,29 +97,49 @@ function logout() {
   token = null;
   localStorage.removeItem('token');
   if (ws) ws.close();
+
+  // Clear sparkline history
+  cpuHistory.length = 0;
+  ramHistory.length = 0;
+  diskHistory.length = 0;
+
   checkAuth();
 }
 
+// ====== Server list (XSS-safe DOM construction) ======
 async function loadServers() {
   try {
     const res = await fetch('/api/servers', {
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: { 'Authorization': 'Bearer ' + token }
     });
     if (res.status === 401) return logout();
     const servers = await res.json();
     const list = document.getElementById('serverList');
     list.innerHTML = '';
-    servers.forEach(srv => {
-      const div = document.createElement('div');
-      div.className = `server-item ${activeServerId === srv.id ? 'active' : ''}`;
-      div.onclick = () => selectServer(srv.id, srv.name);
-      div.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <strong>${srv.name}</strong>
-          <span class="status-dot status-offline" id="dot-${srv.id}"></span>
-        </div>
-        <div style="font-size:11px; color:var(--text-secondary);">${srv.host}:${srv.port}</div>
-      `;
+    servers.forEach(function (srv) {
+      var div = document.createElement('div');
+      div.className = 'server-item' + (activeServerId === srv.id ? ' active' : '');
+      div.onclick = function () { selectServer(srv.id, srv.name); };
+
+      var row = document.createElement('div');
+      row.className = 'server-item-row';
+
+      var nameEl = document.createElement('strong');
+      nameEl.textContent = srv.name;
+
+      var dot = document.createElement('span');
+      dot.className = 'status-dot status-offline';
+      dot.id = 'dot-' + srv.id;
+
+      row.appendChild(nameEl);
+      row.appendChild(dot);
+
+      var hostEl = document.createElement('div');
+      hostEl.className = 'server-item-host';
+      hostEl.textContent = srv.host + ':' + srv.port;
+
+      div.appendChild(row);
+      div.appendChild(hostEl);
       list.appendChild(div);
     });
   } catch (err) {
@@ -86,19 +147,29 @@ async function loadServers() {
   }
 }
 
+// ====== WebSocket ======
 function connectWebSocket() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
     return;
   }
+  updateWsStatus('reconnecting');
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${protocol}//${window.location.host}/ws/monitor`);
+  ws = new WebSocket(protocol + '//' + window.location.host + '/ws/monitor');
 
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ type: 'auth', token }));
+  ws.onopen = function () {
+    reconnectAttempts = 0;
+    updateWsStatus('connected');
+    ws.send(JSON.stringify({ type: 'auth', token: token }));
   };
 
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
+  ws.onmessage = function (event) {
+    var data;
+    try {
+      data = JSON.parse(event.data);
+    } catch (e) {
+      console.error('Failed to parse WS message:', e);
+      return;
+    }
 
     if (data.type === 'authenticated') {
       if (activeServerId) {
@@ -107,18 +178,23 @@ function connectWebSocket() {
     }
 
     if (data.type === 'metrics') {
-      const dot = document.getElementById(`dot-${data.serverId}`);
+      var dot = document.getElementById('dot-' + data.serverId);
       if (dot) {
-        dot.className = `status-dot ${data.status === 'online' ? 'status-online' : 'status-offline'}`;
+        dot.className = 'status-dot ' + (data.status === 'online' ? 'status-online' : 'status-offline');
       }
 
       if (data.serverId === activeServerId) {
+        // Hide loading indicator once metrics arrive
+        document.getElementById('loadingIndicator').style.display = 'none';
+
         if (data.status === 'online') {
-          document.getElementById('activeServerDetails').style.display = 'block';
-          document.getElementById('activeServerUptime').innerText = `Uptime: ${data.metrics.uptime}`;
+          var details = document.getElementById('activeServerDetails');
+          details.style.display = 'block';
+          details.classList.remove('active-server-details-hidden');
+          document.getElementById('activeServerUptime').innerText = 'Uptime: ' + data.metrics.uptime;
           updateOverviewMetrics(data.metrics);
         } else {
-          document.getElementById('activeServerUptime').innerText = `Offline: ${data.error}`;
+          document.getElementById('activeServerUptime').innerText = 'Offline: ' + data.error;
         }
       }
     }
@@ -137,21 +213,37 @@ function connectWebSocket() {
 
     if (data.type === 'logs') {
       if (data.serverId === activeServerId) {
-        document.getElementById('logConsole').innerText = data.logs;
+        var logConsole = document.getElementById('logConsole');
+        logConsole.innerText = data.logs;
+        logConsole.scrollTop = logConsole.scrollHeight;
       }
     }
   };
 
-  ws.onclose = () => {
-    setTimeout(connectWebSocket, 3000);
+  ws.onerror = function (err) {
+    console.error('WebSocket error:', err);
+    updateWsStatus('disconnected');
+  };
+
+  ws.onclose = function () {
+    updateWsStatus('disconnected');
+    var delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
+    reconnectAttempts++;
+    updateWsStatus('reconnecting');
+    setTimeout(connectWebSocket, delay);
   };
 }
 
+// ====== Server selection ======
 function selectServer(id, name) {
   activeServerId = id;
   document.getElementById('activeServerName').innerText = name;
-  document.getElementById('btnDeleteServer').style.display = 'block';
-  
+  var btnDel = document.getElementById('btnDeleteServer');
+  btnDel.style.display = 'block';
+
+  // Show loading indicator
+  document.getElementById('loadingIndicator').style.display = 'flex';
+
   // Clear charts history
   cpuHistory.length = 0;
   ramHistory.length = 0;
@@ -162,11 +254,16 @@ function selectServer(id, name) {
   document.getElementById('dockerList').innerHTML = '';
   document.getElementById('logConsole').innerText = '';
 
-  // Update active sidebar class
-  document.querySelectorAll('.server-item').forEach(item => {
+  // Update active sidebar class locally (no redundant loadServers call)
+  document.querySelectorAll('.server-item').forEach(function (item) {
     item.classList.remove('active');
   });
-  loadServers();
+  // Find the clicked item and set active by matching the dot id
+  var dot = document.getElementById('dot-' + id);
+  if (dot) {
+    var serverItemEl = dot.closest('.server-item');
+    if (serverItemEl) serverItemEl.classList.add('active');
+  }
 
   requestServerMetrics(id);
   switchTab(currentTab);
@@ -178,30 +275,31 @@ function requestServerMetrics(id) {
   }
 }
 
+// ====== Metrics (with null guards) ======
 function updateOverviewMetrics(metrics) {
   // CPU usage
-  const cpuVal = metrics.cpu;
-  document.getElementById('metric-cpu-val').innerText = `${cpuVal.toFixed(1)}%`;
+  var cpuVal = metrics.cpu != null ? metrics.cpu : 0;
+  document.getElementById('metric-cpu-val').innerText = cpuVal.toFixed(1) + '%';
   cpuHistory.push(cpuVal);
   if (cpuHistory.length > maxHistory) cpuHistory.shift();
   drawSparkline('cpuSparkline', cpuHistory, '#06b6d4');
 
   // RAM memory usage
-  const ramVal = metrics.mem.percent;
-  const usedGb = (metrics.mem.used / 1024 / 1024 / 1024).toFixed(2);
-  const totalGb = (metrics.mem.total / 1024 / 1024 / 1024).toFixed(2);
-  document.getElementById('metric-ram-val').innerText = `${ramVal.toFixed(1)}%`;
-  document.getElementById('metric-ram-details').innerText = `Used: ${usedGb} GB / Total: ${totalGb} GB`;
+  var ramVal = metrics.mem && metrics.mem.percent != null ? metrics.mem.percent : 0;
+  var usedGb = metrics.mem && metrics.mem.used != null ? (metrics.mem.used / 1024 / 1024 / 1024).toFixed(2) : '0.00';
+  var totalGb = metrics.mem && metrics.mem.total != null ? (metrics.mem.total / 1024 / 1024 / 1024).toFixed(2) : '0.00';
+  document.getElementById('metric-ram-val').innerText = ramVal.toFixed(1) + '%';
+  document.getElementById('metric-ram-details').innerText = 'Used: ' + usedGb + ' GB / Total: ' + totalGb + ' GB';
   ramHistory.push(ramVal);
   if (ramHistory.length > maxHistory) ramHistory.shift();
   drawSparkline('ramSparkline', ramHistory, '#8b5cf6');
 
   // Storage usage
-  if (metrics.disk.length > 0) {
-    const root = metrics.disk[0];
-    const diskVal = root.used_percent;
-    document.getElementById('metric-disk-val').innerText = `${diskVal}%`;
-    document.getElementById('metric-disk-details').innerText = `Avail: ${root.avail} / Total: ${root.size} on ${root.mount}`;
+  if (metrics.disk && metrics.disk.length > 0) {
+    var root = metrics.disk[0];
+    var diskVal = root.used_percent != null ? root.used_percent : 0;
+    document.getElementById('metric-disk-val').innerText = diskVal + '%';
+    document.getElementById('metric-disk-details').innerText = 'Avail: ' + root.avail + ' / Total: ' + root.size + ' on ' + root.mount;
     diskHistory.push(diskVal);
     if (diskHistory.length > maxHistory) diskHistory.shift();
     drawSparkline('diskSparkline', diskHistory, '#eab308');
@@ -209,41 +307,46 @@ function updateOverviewMetrics(metrics) {
 }
 
 function drawSparkline(canvasId, history, color) {
-  const canvas = document.getElementById(canvasId);
+  var canvas = document.getElementById(canvasId);
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
+  var ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
   ctx.beginPath();
 
-  const step = canvas.width / (maxHistory - 1);
-  history.forEach((val, index) => {
-    const x = index * step;
-    const y = canvas.height - (val / 100) * canvas.height;
+  var step = canvas.width / (maxHistory - 1);
+  history.forEach(function (val, index) {
+    var x = index * step;
+    var y = canvas.height - (val / 100) * canvas.height;
     if (index === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
   ctx.stroke();
 }
 
+// ====== Tabs ======
 function switchTab(tabName) {
   currentTab = tabName;
-  document.querySelectorAll('.tab').forEach(t => {
+  document.querySelectorAll('.tab').forEach(function (t) {
     t.classList.remove('active');
     t.setAttribute('aria-selected', 'false');
   });
-  document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+  document.querySelectorAll('.tab-panel').forEach(function (p) {
+    p.style.display = 'none';
+    p.classList.add('tab-panel-hidden');
+  });
 
-  const tabElem = document.getElementById(`tab-${tabName}`);
+  var tabElem = document.getElementById('tab-' + tabName);
   if (tabElem) {
     tabElem.classList.add('active');
     tabElem.setAttribute('aria-selected', 'true');
   }
-  const panelElem = document.getElementById(`panel-${tabName}`);
+  var panelElem = document.getElementById('panel-' + tabName);
   if (panelElem) {
     panelElem.style.display = 'block';
+    panelElem.classList.remove('tab-panel-hidden');
   }
 
   triggerTabFetch();
@@ -259,6 +362,7 @@ function triggerTabFetch() {
   }
 }
 
+// ====== Process sorting ======
 function toggleProcessSort(field) {
   if (sortField === field) {
     sortDesc = !sortDesc;
@@ -269,56 +373,103 @@ function toggleProcessSort(field) {
   renderProcesses(currentProcesses);
 }
 
+// ====== Render processes (XSS-safe) ======
 function renderProcesses(processes) {
   currentProcesses = processes;
-  const body = document.getElementById('processesList');
+  var body = document.getElementById('processesList');
   body.innerHTML = '';
 
-  const sorted = [...processes].sort((a, b) => {
-    let valA = a[sortField];
-    let valB = b[sortField];
+  // Apply filter
+  var filtered = processes;
+  if (processFilterText) {
+    var lowerFilter = processFilterText.toLowerCase();
+    filtered = processes.filter(function (p) {
+      return p.command && p.command.toLowerCase().indexOf(lowerFilter) !== -1;
+    });
+  }
+
+  var sorted = filtered.slice().sort(function (a, b) {
+    var valA = a[sortField];
+    var valB = b[sortField];
     if (typeof valA === 'string') {
       return sortDesc ? valB.localeCompare(valA) : valA.localeCompare(valB);
     }
     return sortDesc ? valB - valA : valA - valB;
   });
 
-  sorted.forEach(p => {
-    const tr = document.createElement('tr');
-    tr.style.borderBottom = '1px solid var(--border-color)';
-    tr.innerHTML = `
-      <td style="padding:8px 10px;">${p.pid}</td>
-      <td>${p.user}</td>
-      <td style="color:var(--accent-cyan);">${p.cpu.toFixed(1)}%</td>
-      <td>${p.mem.toFixed(1)}%</td>
-      <td style="font-family:monospace; font-size:11px;">${p.command}</td>
-    `;
+  sorted.forEach(function (p) {
+    var tr = document.createElement('tr');
+    tr.className = 'table-row';
+
+    var tdPid = document.createElement('td');
+    tdPid.className = 'table-cell';
+    tdPid.textContent = p.pid;
+
+    var tdUser = document.createElement('td');
+    tdUser.textContent = p.user;
+
+    var tdCpu = document.createElement('td');
+    tdCpu.className = 'table-cell-cyan';
+    tdCpu.textContent = p.cpu.toFixed(1) + '%';
+
+    var tdMem = document.createElement('td');
+    tdMem.textContent = p.mem.toFixed(1) + '%';
+
+    var tdCmd = document.createElement('td');
+    tdCmd.className = 'table-cell-mono';
+    tdCmd.textContent = p.command;
+
+    tr.appendChild(tdPid);
+    tr.appendChild(tdUser);
+    tr.appendChild(tdCpu);
+    tr.appendChild(tdMem);
+    tr.appendChild(tdCmd);
     body.appendChild(tr);
   });
 }
 
+// ====== Render Docker (XSS-safe) ======
 function renderDocker(containers, error) {
-  const body = document.getElementById('dockerList');
+  var body = document.getElementById('dockerList');
   body.innerHTML = '';
   if (error) {
-    body.innerHTML = `<tr><td colspan="3" style="color:var(--accent-red); padding:10px;">${error}</td></tr>`;
+    var tr = document.createElement('tr');
+    var td = document.createElement('td');
+    td.setAttribute('colspan', '3');
+    td.className = 'table-error';
+    td.textContent = error;
+    tr.appendChild(td);
+    body.appendChild(tr);
     return;
   }
-  containers.forEach(c => {
-    const tr = document.createElement('tr');
-    tr.style.borderBottom = '1px solid var(--border-color)';
-    tr.innerHTML = `
-      <td style="padding:8px 10px;"><strong>${c.name}</strong></td>
-      <td style="color:var(--accent-cyan);">${c.cpu}</td>
-      <td>${c.mem}</td>
-    `;
+  containers.forEach(function (c) {
+    var tr = document.createElement('tr');
+    tr.className = 'table-row';
+
+    var tdName = document.createElement('td');
+    tdName.className = 'table-cell';
+    var strong = document.createElement('strong');
+    strong.textContent = c.name;
+    tdName.appendChild(strong);
+
+    var tdCpu = document.createElement('td');
+    tdCpu.className = 'table-cell-cyan';
+    tdCpu.textContent = c.cpu;
+
+    var tdMem = document.createElement('td');
+    tdMem.textContent = c.mem;
+
+    tr.appendChild(tdName);
+    tr.appendChild(tdCpu);
+    tr.appendChild(tdMem);
     body.appendChild(tr);
   });
 }
 
+// ====== Logs ======
 function updateLogPlaceholder() {
-  const type = document.getElementById('logSourceType').value;
-  const input = document.getElementById('logPath');
+  var type = document.getElementById('logSourceType').value;
+  var input = document.getElementById('logPath');
   if (type === 'service') {
     input.placeholder = 'e.g. nginx';
   } else {
@@ -327,8 +478,8 @@ function updateLogPlaceholder() {
 }
 
 function fetchLogs() {
-  const type = document.getElementById('logSourceType').value;
-  const pathVal = document.getElementById('logPath').value;
+  var type = document.getElementById('logSourceType').value;
+  var pathVal = document.getElementById('logPath').value;
   if (!pathVal || !ws || ws.readyState !== WebSocket.OPEN) return;
 
   ws.send(JSON.stringify({
@@ -338,23 +489,27 @@ function fetchLogs() {
   }));
 }
 
-// Modal and CRUD Actions
+// ====== Modal and CRUD ======
 function openServerModal() {
-  document.getElementById('serverModal').style.display = 'flex';
+  var modal = document.getElementById('serverModal');
+  modal.style.display = 'flex';
+  modal.classList.remove('modal-hidden');
 }
 
 function closeServerModal() {
-  document.getElementById('serverModal').style.display = 'none';
+  var modal = document.getElementById('serverModal');
+  modal.style.display = 'none';
+  modal.classList.add('modal-hidden');
 }
 
 function toggleAuthFields() {
-  const type = document.getElementById('hostAuthType').value;
+  var type = document.getElementById('hostAuthType').value;
   document.getElementById('hostPassword').style.display = type === 'password' ? 'block' : 'none';
   document.getElementById('hostPrivateKey').style.display = type === 'key' ? 'block' : 'none';
 }
 
 async function saveServer() {
-  const payload = {
+  var payload = {
     name: document.getElementById('hostName').value,
     host: document.getElementById('hostIp').value,
     port: parseInt(document.getElementById('hostPort').value, 10),
@@ -365,11 +520,11 @@ async function saveServer() {
   };
 
   try {
-    const res = await fetch('/api/servers', {
+    var res = await fetch('/api/servers', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
+        'Authorization': 'Bearer ' + token
       },
       body: JSON.stringify(payload)
     });
@@ -380,15 +535,17 @@ async function saveServer() {
       // Clear fields
       document.getElementById('hostName').value = '';
       document.getElementById('hostIp').value = '';
+      document.getElementById('hostPort').value = '22';
       document.getElementById('hostUser').value = '';
       document.getElementById('hostPassword').value = '';
       document.getElementById('hostPrivateKey').value = '';
+      showToast('Server added successfully', 'success');
     } else {
-      const err = await res.json();
-      alert(`Failed to add server: ${err.error}`);
+      var err = await res.json();
+      showToast('Failed to add server: ' + (err.error || 'Unknown error'), 'error');
     }
   } catch (e) {
-    alert('Server unreachable');
+    showToast('Server unreachable', 'error');
   }
 }
 
@@ -397,40 +554,97 @@ async function deleteActiveServer() {
   if (!confirm('Are you sure you want to disconnect this server?')) return;
 
   try {
-    const res = await fetch(`/api/servers/${activeServerId}`, {
+    var res = await fetch('/api/servers/' + activeServerId, {
       method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: { 'Authorization': 'Bearer ' + token }
     });
 
     if (res.ok) {
       activeServerId = null;
-      document.getElementById('activeServerDetails').style.display = 'none';
+      var details = document.getElementById('activeServerDetails');
+      details.style.display = 'none';
+      details.classList.add('active-server-details-hidden');
       document.getElementById('activeServerName').innerText = 'Select a Host Server';
       document.getElementById('activeServerUptime').innerText = '';
       document.getElementById('btnDeleteServer').style.display = 'none';
       loadServers();
+      showToast('Server removed', 'info');
     }
   } catch (e) {
-    alert('Server unreachable');
+    showToast('Server unreachable', 'error');
   }
 }
 
+// ====== Sidebar ======
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
+  var sidebar = document.getElementById('sidebar');
+  var backdrop = document.getElementById('sidebarBackdrop');
+  sidebar.classList.toggle('open');
+  if (sidebar.classList.contains('open')) {
+    backdrop.classList.add('visible');
+  } else {
+    backdrop.classList.remove('visible');
+  }
 }
 
-// Bind keyboard listeners to tab triggers for WCAG compliance
+// ====== Accessibility ======
 function bindTabAccessibility() {
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('keydown', (e) => {
+  var tabs = document.querySelectorAll('.tab');
+  tabs.forEach(function (tab) {
+    tab.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         tab.click();
+      }
+
+      // Arrow key navigation between tabs
+      var tabsArr = Array.from(document.querySelectorAll('.tab'));
+      var index = tabsArr.indexOf(tab);
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        var next = tabsArr[(index + 1) % tabsArr.length];
+        next.focus();
+        next.click();
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        var prev = tabsArr[(index - 1 + tabsArr.length) % tabsArr.length];
+        prev.focus();
+        prev.click();
       }
     });
   });
 }
 
-// Init app
+// ====== Escape key to close modal ======
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') {
+    var modal = document.getElementById('serverModal');
+    if (modal && modal.style.display !== 'none' && !modal.classList.contains('modal-hidden')) {
+      closeServerModal();
+    }
+  }
+});
+
+// ====== Backdrop click to close modal ======
+document.addEventListener('click', function (e) {
+  var modal = document.getElementById('serverModal');
+  if (e.target === modal) {
+    closeServerModal();
+  }
+});
+
+// ====== Process filter input ======
+document.addEventListener('DOMContentLoaded', function () {
+  var filterInput = document.getElementById('processFilter');
+  if (filterInput) {
+    filterInput.addEventListener('input', function () {
+      processFilterText = filterInput.value;
+      renderProcesses(currentProcesses);
+    });
+  }
+});
+
+// ====== Init app ======
 checkAuth();
 bindTabAccessibility();

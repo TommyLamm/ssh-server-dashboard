@@ -3,12 +3,20 @@ const express = require('express');
 const expressWs = require('express-ws');
 const jwt = require('jsonwebtoken');
 const path = require('path');
+const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const sshPool = require('./sshPool');
 
 const app = express();
 const wsInstance = expressWs(app);
 
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || false,
+  credentials: true
+}));
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
@@ -16,16 +24,34 @@ const PORT = process.env.PORT || 3000;
 const USERNAME = process.env.DASHBOARD_USERNAME || 'admin';
 const PASSWORD = process.env.DASHBOARD_PASSWORD || 'admin';
 const JWT_SECRET = process.env.DASHBOARD_SECRET || 'fallback-jwt-secret';
+const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL, 10) || 3000;
+const LOG_TAIL_LINES = parseInt(process.env.LOG_TAIL_LINES, 10) || 100;
+const MAX_PROCESSES = parseInt(process.env.MAX_PROCESSES, 10) || 30;
 
 // Production Safeguard for JWT Secret
 if (process.env.NODE_ENV === 'production' && (!process.env.DASHBOARD_SECRET || process.env.DASHBOARD_SECRET === 'fallback-jwt-secret')) {
   throw new Error('A secure, non-default DASHBOARD_SECRET environment variable is required in production.');
 }
 
+if (process.env.NODE_ENV === 'production' && (!process.env.DASHBOARD_USERNAME || !process.env.DASHBOARD_PASSWORD)) {
+  throw new Error('DASHBOARD_USERNAME and DASHBOARD_PASSWORD environment variables are required in production.');
+}
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Too many login attempts. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // Middleware to authenticate JWT
 function authenticate(req, res, next) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const token = authHeader.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
   jwt.verify(token, JWT_SECRET, (err, user) => {
@@ -47,7 +73,7 @@ function sendWs(ws, msg) {
 }
 
 // REST endpoints
-app.post('/api/login', (req, res) => {
+app.post('/api/login', loginLimiter, (req, res) => {
   const { username, password } = req.body;
   if (username === USERNAME && password === PASSWORD) {
     const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '24h' });
@@ -69,7 +95,8 @@ app.get('/api/servers', authenticate, async (req, res) => {
     }));
     res.json(sanitized);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const errMsg = process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message;
+    res.status(500).json({ error: errMsg });
   }
 });
 
@@ -99,17 +126,61 @@ app.post('/api/servers', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Private key must be a non-empty string when auth_type is key' });
     }
 
-    const serverId = await db.addServer(req.body);
+    const serverId = await db.addServer({ name, host, username, port, auth_type, password, private_key });
     res.status(201).json({ id: serverId });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const errMsg = process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message;
+    res.status(500).json({ error: errMsg });
+  }
+});
+
+app.put('/api/servers/:id', authenticate, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid server ID' });
+    
+    const { name, host, username, port, auth_type, password, private_key } = req.body || {};
+    const updates = {};
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Name must be a non-empty string' });
+      updates.name = name;
+    }
+    if (host !== undefined) {
+      if (typeof host !== 'string' || !host.trim()) return res.status(400).json({ error: 'Host must be a non-empty string' });
+      updates.host = host;
+    }
+    if (port !== undefined) {
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return res.status(400).json({ error: 'Port must be an integer between 1 and 65535' });
+      updates.port = port;
+    }
+    if (username !== undefined) {
+      if (typeof username !== 'string' || !username.trim()) return res.status(400).json({ error: 'Username must be a non-empty string' });
+      updates.username = username;
+    }
+    if (auth_type !== undefined) {
+      if (auth_type !== 'password' && auth_type !== 'key') return res.status(400).json({ error: 'Auth type must be either password or key' });
+      updates.auth_type = auth_type;
+    }
+    if (password !== undefined) updates.password = password;
+    if (private_key !== undefined) updates.private_key = private_key;
+    
+    const changes = await db.updateServer(id, updates);
+    if (changes === 0) return res.status(404).json({ error: 'Server not found or no changes made' });
+    
+    sshPool.closeConnection(id);
+    res.json({ success: true, changes });
+  } catch (err) {
+    const errMsg = process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message;
+    res.status(500).json({ error: errMsg });
   }
 });
 
 app.delete('/api/servers/:id', authenticate, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    await db.deleteServer(id);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid server ID' });
+    const changes = await db.deleteServer(id);
+    if (changes === 0) return res.status(404).json({ error: 'Server not found' });
     sshPool.closeConnection(id);
 
     // Evict all WebSocket clients monitoring this server
@@ -127,12 +198,24 @@ app.delete('/api/servers/:id', authenticate, async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const errMsg = process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message;
+    res.status(500).json({ error: errMsg });
   }
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', uptime: process.uptime() });
 });
 
 // WebSocket real-time monitor stream
 app.ws('/ws/monitor', (ws, req) => {
+  const MAX_WS_CONNECTIONS = parseInt(process.env.MAX_WS_CONNECTIONS, 10) || 50;
+  const wss = wsInstance.getWss();
+  if (wss.clients.size > MAX_WS_CONNECTIONS) {
+    ws.close(1013, 'Maximum connections reached');
+    return;
+  }
+
   // Prevent process crashes due to unhandled socket errors
   ws.on('error', (err) => {
     console.error('WebSocket client error:', err.message);
@@ -175,10 +258,8 @@ app.ws('/ws/monitor', (ws, req) => {
         }
         ws.activeServerId = null;
 
-        const servers = await db.getServers();
+        serverInfo = await db.getServerById(parseInt(data.serverId, 10));
         if (currentSessionId !== activeSessionId) return;
-
-        serverInfo = servers.find(s => s.id === parseInt(data.serverId, 10));
 
         if (!serverInfo) {
           return sendWs(ws, { type: 'error', message: 'Server not found' });
@@ -224,7 +305,7 @@ app.ws('/ws/monitor', (ws, req) => {
         }
 
         fetchMetrics();
-        ws.monitorInterval = setInterval(fetchMetrics, 2000);
+        ws.monitorInterval = setInterval(fetchMetrics, POLL_INTERVAL);
       }
 
       if (data.type === 'fetch-processes') {
@@ -233,7 +314,7 @@ app.ws('/ws/monitor', (ws, req) => {
           return;
         }
         const conn = await sshPool.getConnection(targetServer);
-        const processesOut = await sshPool.execCommand(conn, "ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n 30");
+        const processesOut = await sshPool.execCommand(conn, `ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n ${MAX_PROCESSES}`);
         const processes = sshPool.parseProcesses(processesOut);
         sendWs(ws, { type: 'processes', serverId: targetServer.id, processes });
       }
@@ -270,19 +351,26 @@ app.ws('/ws/monitor', (ws, req) => {
           if (!data.logPath || !fileRegex.test(data.logPath)) {
             return sendWs(ws, { type: 'error', message: 'Invalid log file path' });
           }
+          if (data.logPath.includes('..')) {
+            return sendWs(ws, { type: 'error', message: 'Invalid log file path' });
+          }
+          if (!data.logPath.startsWith('/var/log/')) {
+            return sendWs(ws, { type: 'error', message: 'Invalid log file path' });
+          }
         }
 
         const conn = await sshPool.getConnection(targetServer);
-        let logCmd = `tail -n 100 "${data.logPath}"`;
+        let logCmd = `tail -n ${LOG_TAIL_LINES} "${data.logPath}"`;
         if (data.isService) {
-          logCmd = `journalctl -u "${data.logPath}" -n 100 --no-pager`;
+          logCmd = `journalctl -u "${data.logPath}" -n ${LOG_TAIL_LINES} --no-pager`;
         }
         const logs = await sshPool.execCommand(conn, logCmd);
         sendWs(ws, { type: 'logs', serverId: targetServer.id, logs });
       }
 
     } catch (e) {
-      sendWs(ws, { type: 'error', message: e.message });
+      const errMsg = process.env.NODE_ENV === 'production' ? 'Internal error' : e.message;
+      sendWs(ws, { type: 'error', message: errMsg });
     }
   });
 
@@ -293,6 +381,22 @@ app.ws('/ws/monitor', (ws, req) => {
     }
   });
 });
+
+function gracefulShutdown(signal) {
+  console.log(`\n${signal} received. Shutting down gracefully...`);
+  const wss = wsInstance.getWss();
+  wss.clients.forEach(client => {
+    if (client.monitorInterval) clearInterval(client.monitorInterval);
+    client.close(1001, 'Server shutting down');
+  });
+  sshPool.closeAll();
+  db.close().then(() => {
+    console.log('Cleanup complete. Exiting.');
+    process.exit(0);
+  }).catch(() => process.exit(1));
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 if (require.main === module) {
   db.init().then(() => {

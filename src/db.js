@@ -50,7 +50,7 @@ function getEncryptionKey() {
   try {
     const dbDir = path.dirname(dbFile);
     if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-    fs.writeFileSync(keyFile, randomKey.toString('hex'), 'utf8');
+    fs.writeFileSync(keyFile, randomKey.toString('hex'), { encoding: 'utf8', mode: 0o600 });
   } catch (err) {
     console.warn('Failed to save generated encryption key file:', err.message);
   }
@@ -161,6 +161,24 @@ function getServers() {
   });
 }
 
+function getServerById(id) {
+  return new Promise((resolve, reject) => {
+    getDb().get(`SELECT * FROM servers WHERE id = ?`, [id], (err, row) => {
+      if (err) {
+        reject(err);
+      } else if (!row) {
+        resolve(null);
+      } else {
+        resolve({
+          ...row,
+          password: decrypt(row.password),
+          private_key: decrypt(row.private_key)
+        });
+      }
+    });
+  });
+}
+
 function updateServer(id, server) {
   return new Promise((resolve, reject) => {
     const fields = [];
@@ -220,6 +238,7 @@ module.exports = {
   decrypt,
   addServer,
   getServers,
+  getServerById,
   updateServer,
   deleteServer,
   close
