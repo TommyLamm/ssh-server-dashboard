@@ -1,4 +1,4 @@
-let token = localStorage.getItem('token');
+let isLoggedIn = sessionStorage.getItem('loggedIn') === 'true';
 let ws = null;
 let activeServerId = null;
 let currentTab = 'overview';
@@ -52,7 +52,7 @@ function updateWsStatus(state) {
 
 // ====== Auth ======
 function checkAuth() {
-  if (token) {
+  if (isLoggedIn) {
     document.getElementById('loginPage').style.display = 'none';
     var dash = document.getElementById('dashboardApp');
     dash.style.display = 'flex';
@@ -82,8 +82,8 @@ async function login() {
     });
     const data = await res.json();
     if (res.ok) {
-      token = data.token;
-      localStorage.setItem('token', token);
+      isLoggedIn = true;
+      sessionStorage.setItem('loggedIn', 'true');
       checkAuth();
     } else {
       errDiv.innerText = data.error || 'Login failed';
@@ -94,8 +94,9 @@ async function login() {
 }
 
 function logout() {
-  token = null;
-  localStorage.removeItem('token');
+  fetch('/api/logout', { method: 'POST' }).catch(() => {});
+  isLoggedIn = false;
+  sessionStorage.removeItem('loggedIn');
   if (ws) ws.close();
 
   // Clear sparkline history
@@ -109,10 +110,8 @@ function logout() {
 // ====== Server list (XSS-safe DOM construction) ======
 async function loadServers() {
   try {
-    const res = await fetch('/api/servers', {
-      headers: { 'Authorization': 'Bearer ' + token }
-    });
-    if (res.status === 401) return logout();
+    const res = await fetch('/api/servers');
+    if (res.status === 401 || res.status === 403) return logout();
     const servers = await res.json();
     const list = document.getElementById('serverList');
     list.innerHTML = '';
@@ -159,7 +158,6 @@ function connectWebSocket() {
   ws.onopen = function () {
     reconnectAttempts = 0;
     updateWsStatus('connected');
-    ws.send(JSON.stringify({ type: 'auth', token: token }));
   };
 
   ws.onmessage = function (event) {
@@ -738,8 +736,7 @@ async function saveServer() {
     var res = await fetch('/api/servers', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(payload)
     });
@@ -770,8 +767,7 @@ async function deleteActiveServer() {
 
   try {
     var res = await fetch('/api/servers/' + activeServerId, {
-      method: 'DELETE',
-      headers: { 'Authorization': 'Bearer ' + token }
+      method: 'DELETE'
     });
 
     if (res.ok) {

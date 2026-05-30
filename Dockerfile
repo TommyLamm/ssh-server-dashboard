@@ -1,4 +1,4 @@
-FROM node:18-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache python3 make g++ gcc sqlite-dev
 RUN chown -R node:node /app
@@ -6,7 +6,7 @@ USER node
 COPY --chown=node:node package*.json ./
 RUN npm ci --only=production
 
-FROM node:18-alpine
+FROM node:22-alpine
 WORKDIR /app
 RUN apk add --no-cache openssh-client sqlite-libs wget
 RUN mkdir -p /app/data && chown -R node:node /app

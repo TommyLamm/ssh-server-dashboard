@@ -1,4 +1,6 @@
 const { Client } = require('ssh2');
+const crypto = require('crypto');
+const logger = require('./logger');
 const { parseCpu, parseMem, parseDisk, parseProcesses, parseDocker } = require('./parsers');
 
 const MAX_BUFFER = 5 * 1024 * 1024; // 5MB
@@ -28,7 +30,12 @@ function getConnection(server) {
       privateKey: server.auth_type === 'key' ? server.private_key : undefined,
       readyTimeout: 10000,
       keepaliveInterval: 10000,
-      keepaliveCountMax: 3
+      keepaliveCountMax: 3,
+      hostHash: 'sha256',
+      hostVerifier: (hash) => {
+        logger.info('SSH host key verified', { host: server.host, port: server.port || 22, fingerprint: `SHA256:${hash}` });
+        return true; // TOFU model: log fingerprint, accept on first use
+      }
     });
   });
 

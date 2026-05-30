@@ -1,6 +1,7 @@
 const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
 const path = require('path');
+const logger = require('./logger');
 const fs = require('fs');
 
 const dbFile = process.env.DASHBOARD_DB_PATH || path.join(__dirname, '../data/dashboard.db');
@@ -28,7 +29,7 @@ function getEncryptionKey() {
     if (process.env.NODE_ENV === 'production' && process.env.DASHBOARD_SECRET === 'SuperSecretKeyForJWTAuth123!') {
       throw new Error('A secure, non-default DASHBOARD_SECRET environment variable is required in production.');
     }
-    return crypto.createHash('sha256').update(process.env.DASHBOARD_SECRET).digest();
+    return crypto.scryptSync(process.env.DASHBOARD_SECRET, 'server-dashboard-kdf-v1', 32);
   }
 
   // 3. Try reading from persistent file
@@ -42,7 +43,7 @@ function getEncryptionKey() {
       }
     }
   } catch (err) {
-    console.warn('Failed to read encryption key file:', err.message);
+    logger.warn('Failed to read encryption key file', { error: err.message });
   }
 
   // 4. Generate random key and save it
@@ -52,7 +53,7 @@ function getEncryptionKey() {
     if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
     fs.writeFileSync(keyFile, randomKey.toString('hex'), { encoding: 'utf8', mode: 0o600 });
   } catch (err) {
-    console.warn('Failed to save generated encryption key file:', err.message);
+    logger.warn('Failed to save encryption key file', { error: err.message });
   }
   return randomKey;
 }
@@ -84,7 +85,8 @@ function decrypt(encryptedText) {
   if (!encryptedText) return '';
   const GCM_FORMAT_REGEX = /^[0-9a-fA-F]{24}:[0-9a-fA-F]{32}:[0-9a-fA-F]+$/;
   if (!GCM_FORMAT_REGEX.test(encryptedText)) {
-    return encryptedText; // plaintext fallback
+    logger.warn('Decrypt: value not in expected encrypted format', { hint: 'possible unencrypted legacy data' });
+    return null;
   }
   const parts = encryptedText.split(':');
   try {
@@ -97,7 +99,7 @@ function decrypt(encryptedText) {
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (err) {
-    console.warn('Decryption failed:', err.message);
+    logger.warn('Decryption failed', { error: err.message });
     return null; // Return null instead of ciphertext to avoid leaking it or passing it to connections
   }
 }
@@ -157,6 +159,15 @@ function getServers() {
         }));
         resolve(decrypted);
       }
+    });
+  });
+}
+
+function getServersListView() {
+  return new Promise((resolve, reject) => {
+    getDb().all(`SELECT id, name, host, port, username, auth_type FROM servers`, [], (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
     });
   });
 }
@@ -238,6 +249,7 @@ module.exports = {
   decrypt,
   addServer,
   getServers,
+  getServersListView,
   getServerById,
   updateServer,
   deleteServer,

@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const sshPool = require('./sshPool');
+const logger = require('./logger');
 
 const app = express();
 const wsInstance = expressWs(app);
@@ -16,25 +17,38 @@ app.use(cors({
   origin: process.env.CORS_ORIGIN || false,
   credentials: true
 }));
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.json());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+      imgSrc: ["'self'", "data:"],
+    }
+  }
+}));
+app.use(express.json({ limit: '10kb' }));
 app.use(express.static(path.join(__dirname, '../public')));
 
+// M2: In production, deploy behind a reverse proxy (nginx/Caddy) with TLS termination.
+// This server does not handle HTTPS directly. Ensure the proxy sets X-Forwarded-Proto.
+
 const PORT = process.env.PORT || 3000;
-const USERNAME = process.env.DASHBOARD_USERNAME || 'admin';
-const PASSWORD = process.env.DASHBOARD_PASSWORD || 'admin';
-const JWT_SECRET = process.env.DASHBOARD_SECRET || 'fallback-jwt-secret';
+const USERNAME = process.env.DASHBOARD_USERNAME;
+const PASSWORD = process.env.DASHBOARD_PASSWORD;
+const JWT_SECRET = process.env.DASHBOARD_SECRET;
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL, 10) || 3000;
-const LOG_TAIL_LINES = parseInt(process.env.LOG_TAIL_LINES, 10) || 100;
-const MAX_PROCESSES = parseInt(process.env.MAX_PROCESSES, 10) || 30;
+const LOG_TAIL_LINES = Math.min(Math.max(parseInt(process.env.LOG_TAIL_LINES, 10) || 100, 1), 10000);
+const MAX_PROCESSES = Math.min(Math.max(parseInt(process.env.MAX_PROCESSES, 10) || 30, 1), 500);
 
-// Production Safeguard for JWT Secret
-if (process.env.NODE_ENV === 'production' && (!process.env.DASHBOARD_SECRET || process.env.DASHBOARD_SECRET === 'fallback-jwt-secret')) {
-  throw new Error('A secure, non-default DASHBOARD_SECRET environment variable is required in production.');
+// Startup Safeguard: always require credentials (regardless of NODE_ENV)
+if (!USERNAME || !PASSWORD) {
+  throw new Error('DASHBOARD_USERNAME and DASHBOARD_PASSWORD environment variables are required.');
 }
-
-if (process.env.NODE_ENV === 'production' && (!process.env.DASHBOARD_USERNAME || !process.env.DASHBOARD_PASSWORD)) {
-  throw new Error('DASHBOARD_USERNAME and DASHBOARD_PASSWORD environment variables are required in production.');
+if (!JWT_SECRET) {
+  throw new Error('DASHBOARD_SECRET environment variable is required.');
 }
 
 const loginLimiter = rateLimit({
@@ -45,16 +59,30 @@ const loginLimiter = rateLimit({
   legacyHeaders: false
 });
 
+// NOTE: Single-admin-user system. All authenticated users share the same
+// access level to all registered servers. If multi-user support is needed,
+// implement per-user server ownership and role-based access control (RBAC).
+
+// Parse JWT token from httpOnly cookie or Authorization header
+function getCookieToken(req) {
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) return null;
+  const match = cookieHeader.match(/(?:^|;\s*)token=([^;]*)/);
+  return match ? match[1] : null;
+}
+
 // Middleware to authenticate JWT
 function authenticate(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  let tokenValue = getCookieToken(req);
+  if (!tokenValue) {
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      tokenValue = authHeader.split(' ')[1];
+    }
   }
-  const token = authHeader.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!tokenValue) return res.status(401).json({ error: 'Unauthorized' });
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(tokenValue, JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ error: 'Forbidden' });
     req.user = user;
     next();
@@ -67,33 +95,64 @@ function sendWs(ws, msg) {
     try {
       ws.send(JSON.stringify(msg));
     } catch (err) {
-      console.warn('WebSocket send failed:', err.message);
+      logger.warn('WebSocket send failed', { error: err.message });
     }
   }
 }
 
+// M6: Progressive account lockout tracking
+const failedAttempts = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 3600000;
+  for (const [ip, data] of failedAttempts) {
+    if (data.lastAttempt < cutoff) failedAttempts.delete(ip);
+  }
+}, 600000);
+
 // REST endpoints
 app.post('/api/login', loginLimiter, (req, res) => {
+  const clientIp = req.ip;
+  const attempts = failedAttempts.get(clientIp) || { count: 0, lastAttempt: 0 };
+
+  // Progressive lockout after 5 failed attempts
+  if (attempts.count >= 5) {
+    const lockoutMs = Math.min(Math.pow(2, attempts.count - 5) * 60000, 3600000);
+    const elapsed = Date.now() - attempts.lastAttempt;
+    if (elapsed < lockoutMs) {
+      const remainingSec = Math.ceil((lockoutMs - elapsed) / 1000);
+      return res.status(429).json({ error: `Account locked. Try again in ${remainingSec} seconds.` });
+    }
+  }
+
   const { username, password } = req.body;
   if (username === USERNAME && password === PASSWORD) {
+    failedAttempts.delete(clientIp);
     const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '24h' });
-    return res.json({ token });
+    res.cookie('token', token, {
+      httpOnly: true,
+      sameSite: 'strict',
+      path: '/',
+      maxAge: 24 * 60 * 60 * 1000,
+      secure: process.env.NODE_ENV === 'production'
+    });
+    return res.json({ success: true });
   }
+  attempts.count++;
+  attempts.lastAttempt = Date.now();
+  failedAttempts.set(clientIp, attempts);
+  logger.warn('Failed login attempt', { ip: clientIp, attempt: attempts.count });
   res.status(401).json({ error: 'Invalid credentials' });
+});
+
+app.post('/api/logout', (req, res) => {
+  res.clearCookie('token', { httpOnly: true, sameSite: 'strict', path: '/' });
+  res.json({ success: true });
 });
 
 app.get('/api/servers', authenticate, async (req, res) => {
   try {
-    const servers = await db.getServers();
-    const sanitized = servers.map(s => ({
-      id: s.id,
-      name: s.name,
-      host: s.host,
-      port: s.port,
-      username: s.username,
-      auth_type: s.auth_type
-    }));
-    res.json(sanitized);
+    const servers = await db.getServersListView();
+    res.json(servers);
   } catch (err) {
     const errMsg = process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message;
     res.status(500).json({ error: errMsg });
@@ -216,38 +275,52 @@ app.ws('/ws/monitor', (ws, req) => {
     return;
   }
 
+  // HTTP-level JWT verification via cookie or query parameter
+  const wsToken = getCookieToken(req) || (req.query && req.query.token);
+  if (!wsToken) {
+    ws.close(1008, 'Authentication required');
+    return;
+  }
+  try {
+    jwt.verify(wsToken, JWT_SECRET);
+  } catch (err) {
+    ws.close(1008, 'Invalid token');
+    return;
+  }
+
   // Prevent process crashes due to unhandled socket errors
   ws.on('error', (err) => {
-    console.error('WebSocket client error:', err.message);
+    logger.error('WebSocket client error', { error: err.message });
   });
 
   ws.activeServerId = null;
   ws.monitorInterval = null;
-  ws.authenticated = false;
+  ws.authenticated = true;
+
+  // Notify client that auth is complete
+  sendWs(ws, { type: 'authenticated' });
 
   let activeSessionId = 0;
   let serverInfo = null;
 
+  // H2 Fix: Per-connection WebSocket message rate limiting
+  const wsMessageTimestamps = [];
+  const WS_RATE_LIMIT = 20;     // max messages per window
+  const WS_RATE_WINDOW = 5000;  // 5-second sliding window (ms)
+
   ws.on('message', async (msg) => {
     try {
+      // Rate limiting check
+      const now = Date.now();
+      wsMessageTimestamps.push(now);
+      while (wsMessageTimestamps.length > 0 && wsMessageTimestamps[0] < now - WS_RATE_WINDOW) {
+        wsMessageTimestamps.shift();
+      }
+      if (wsMessageTimestamps.length > WS_RATE_LIMIT) {
+        return sendWs(ws, { type: 'error', message: 'Rate limit exceeded. Please slow down.' });
+      }
+
       const data = JSON.parse(msg);
-
-      if (data.type === 'auth') {
-        try {
-          jwt.verify(data.token, JWT_SECRET);
-          ws.authenticated = true;
-          sendWs(ws, { type: 'authenticated' });
-        } catch (err) {
-          sendWs(ws, { type: 'error', message: 'Auth failed' });
-          return ws.close();
-        }
-        return;
-      }
-
-      if (!ws.authenticated) {
-        sendWs(ws, { type: 'error', message: 'Unauthorized' });
-        return ws.close();
-      }
 
       if (data.type === 'select-server') {
         const currentSessionId = ++activeSessionId;
@@ -301,7 +374,7 @@ app.ws('/ws/monitor', (ws, req) => {
               type: 'metrics',
               serverId: serverInfo.id,
               status: 'offline',
-              error: err.message
+              error: process.env.NODE_ENV === 'production' ? 'Connection failed' : err.message
             });
           }
         }
@@ -385,7 +458,7 @@ app.ws('/ws/monitor', (ws, req) => {
 });
 
 function gracefulShutdown(signal) {
-  console.log(`\n${signal} received. Shutting down gracefully...`);
+  logger.info('Shutting down gracefully', { signal });
   const wss = wsInstance.getWss();
   wss.clients.forEach(client => {
     if (client.monitorInterval) clearInterval(client.monitorInterval);
@@ -393,7 +466,7 @@ function gracefulShutdown(signal) {
   });
   sshPool.closeAll();
   db.close().then(() => {
-    console.log('Cleanup complete. Exiting.');
+    logger.info('Cleanup complete, exiting');
     process.exit(0);
   }).catch(() => process.exit(1));
 }
@@ -403,10 +476,10 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 if (require.main === module) {
   db.init().then(() => {
     app.listen(PORT, () => {
-      console.log(`Server Dashboard listening on port ${PORT}`);
+      logger.info('Server Dashboard started', { port: PORT });
     });
   }).catch(err => {
-    console.error("Database initialization failed:", err.message);
+    logger.error('Database initialization failed', { error: err.message });
     process.exit(1);
   });
 }
