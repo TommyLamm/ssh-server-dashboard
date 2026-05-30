@@ -26,6 +26,7 @@ app.use(helmet({
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       connectSrc: ["'self'", "ws:", "wss:"],
       imgSrc: ["'self'", "data:"],
+      upgradeInsecureRequests: null, // Allow HTTP connections on LAN without forcing HTTPS upgrade
     }
   }
 }));
