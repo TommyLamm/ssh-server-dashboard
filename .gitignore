@@ -68,6 +68,10 @@ web_modules/
 # Parcel buffer directory
 .parcel-cache
 
+# Docker Compose local overrides
+docker-compose.override.yml
+docker-compose.local.yml
+
 # Next.js build images and static files
 .next
 out
@@ -121,6 +125,10 @@ data/
 .env.development
 .env.test
 
+# Generated encryption key
+encryption.key
+
 # Application custom folders
 .superpowers/
+docs/superpowers/
 
