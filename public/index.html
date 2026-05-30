@@ -13,7 +13,7 @@
 
   <!-- Login Overlay -->
   <div id="loginPage" class="login-container">
-    <form class="login-card" onsubmit="event.preventDefault(); login();">
+    <form id="loginForm" class="login-card">
       <h2 class="login-title">⚡ SYS_CONTROL</h2>
       <p class="login-subtitle">Enter credential configuration to login</p>
       <label for="username" class="sr-only">Username</label>
@@ -28,22 +28,22 @@
   <!-- Dashboard App -->
   <div id="dashboardApp" class="dashboard-container dashboard-hidden">
     <!-- Sidebar Backdrop (mobile) -->
-    <div id="sidebarBackdrop" class="sidebar-backdrop" onclick="toggleSidebar()"></div>
+    <div id="sidebarBackdrop" class="sidebar-backdrop"></div>
 
     <!-- Collapsible Sidebar -->
     <aside id="sidebar" class="sidebar">
       <div>
         <div class="sidebar-header">
           <h2 class="sidebar-title">📡 SYS.MONITOR</h2>
-          <button id="btnCloseSidebar" onclick="toggleSidebar()" class="hamburger" aria-label="Close sidebar">✕</button>
+          <button id="btnCloseSidebar" class="hamburger" aria-label="Close sidebar">✕</button>
         </div>
-        <button id="btnAddServer" onclick="openServerModal()" class="btn btn-full-width">+ Add Host Server</button>
+        <button id="btnAddServer" class="btn btn-full-width">+ Add Host Server</button>
         
         <div id="serverList" class="server-list"></div>
       </div>
       <div>
         <div class="login-user-info" id="loginUserInfo">Logged in as admin</div>
-        <button id="btnLogout" onclick="logout()" class="btn btn-danger btn-full-width">Log Out</button>
+        <button id="btnLogout" class="btn btn-danger btn-full-width">Log Out</button>
       </div>
     </aside>
 
@@ -51,7 +51,7 @@
     <main class="main-content">
       <header class="main-header">
         <div class="header-left">
-          <button id="btnOpenSidebar" onclick="toggleSidebar()" class="hamburger" aria-label="Open sidebar">☰</button>
+          <button id="btnOpenSidebar" class="hamburger" aria-label="Open sidebar">☰</button>
           <div>
             <h1 id="activeServerName">Select a Host Server</h1>
             <p id="activeServerUptime" class="uptime-text"></p>
@@ -62,7 +62,7 @@
             <span class="ws-status-dot"></span>
             <span class="ws-status-label">Disconnected</span>
           </div>
-          <button id="btnDeleteServer" onclick="deleteActiveServer()" class="btn btn-danger btn-delete-server">Delete Server</button>
+          <button id="btnDeleteServer" class="btn btn-danger btn-delete-server">Delete Server</button>
         </div>
       </header>
 
@@ -75,10 +75,10 @@
       <!-- Panel Content -->
       <div id="activeServerDetails" class="active-server-details-hidden">
         <nav class="tabs" role="tablist">
-          <button id="tab-overview" class="tab active" role="tab" tabindex="0" aria-selected="true" aria-controls="panel-overview" onclick="switchTab('overview')">Overview</button>
-          <button id="tab-processes" class="tab" role="tab" tabindex="0" aria-selected="false" aria-controls="panel-processes" onclick="switchTab('processes')">Processes</button>
-          <button id="tab-docker" class="tab" role="tab" tabindex="0" aria-selected="false" aria-controls="panel-docker" onclick="switchTab('docker')">Docker Containers</button>
-          <button id="tab-logs" class="tab" role="tab" tabindex="0" aria-selected="false" aria-controls="panel-logs" onclick="switchTab('logs')">System Logs</button>
+          <button id="tab-overview" class="tab active" role="tab" tabindex="0" aria-selected="true" aria-controls="panel-overview">Overview</button>
+          <button id="tab-processes" class="tab" role="tab" tabindex="0" aria-selected="false" aria-controls="panel-processes">Processes</button>
+          <button id="tab-docker" class="tab" role="tab" tabindex="0" aria-selected="false" aria-controls="panel-docker">Docker Containers</button>
+          <button id="tab-logs" class="tab" role="tab" tabindex="0" aria-selected="false" aria-controls="panel-logs">System Logs</button>
         </nav>
 
         <!-- Tab 1: Overview -->
@@ -133,10 +133,10 @@
             <table class="data-table">
               <thead>
                 <tr class="table-header-row">
-                  <th class="table-header-cell sortable" onclick="toggleProcessSort('pid')">PID ⇅</th>
-                  <th class="sortable" onclick="toggleProcessSort('user')">USER ⇅</th>
-                  <th class="sortable" onclick="toggleProcessSort('cpu')">CPU % ⇅</th>
-                  <th class="sortable" onclick="toggleProcessSort('mem')">MEM % ⇅</th>
+                  <th id="th-pid" class="table-header-cell sortable">PID ⇅</th>
+                  <th id="th-user" class="sortable">USER ⇅</th>
+                  <th id="th-cpu" class="sortable">CPU % ⇅</th>
+                  <th id="th-mem" class="sortable">MEM (MB) ⇅</th>
                   <th>COMMAND</th>
                 </tr>
               </thead>
@@ -165,13 +165,13 @@
         <section id="panel-logs" class="tab-panel tab-panel-hidden" role="tabpanel" aria-labelledby="tab-logs">
           <div class="log-controls">
             <label for="logSourceType" class="sr-only">Log source type</label>
-            <select id="logSourceType" class="input-field log-source-select" onchange="updateLogPlaceholder()">
+            <select id="logSourceType" class="input-field log-source-select">
               <option value="service">Systemd Service</option>
               <option value="file">Log File Path</option>
             </select>
             <label for="logPath" class="sr-only">Log path</label>
             <input type="text" id="logPath" class="input-field" placeholder="e.g. nginx">
-            <button id="btnStreamLogs" onclick="fetchLogs()" class="btn">Stream Logs</button>
+            <button id="btnStreamLogs" class="btn">Stream Logs</button>
           </div>
           <pre id="logConsole" class="log-console"></pre>
         </section>
@@ -181,7 +181,7 @@
 
   <!-- Server Connection Modal -->
   <div id="serverModal" class="modal modal-hidden">
-    <form class="modal-content" onsubmit="event.preventDefault(); saveServer();">
+    <form id="serverForm" class="modal-content">
       <h3 class="modal-title">Connect New Host Server</h3>
       <div class="modal-form-body">
         <label for="hostName" class="sr-only">Server name</label>
@@ -196,7 +196,7 @@
         <input type="text" id="hostUser" class="input-field" placeholder="SSH Username" required>
         
         <label for="hostAuthType" class="sr-only">Authentication type</label>
-        <select id="hostAuthType" class="input-field" onchange="toggleAuthFields()">
+        <select id="hostAuthType" class="input-field">
           <option value="password">Password Auth</option>
           <option value="key">Private Key Auth</option>
         </select>
@@ -207,7 +207,7 @@
         <textarea id="hostPrivateKey" class="input-field modal-textarea-key" placeholder="Paste Private Key Content"></textarea>
 
         <div class="modal-actions">
-          <button type="button" id="btnCancelModal" onclick="closeServerModal()" class="btn btn-secondary">Cancel</button>
+          <button type="button" id="btnCancelModal" class="btn btn-secondary">Cancel</button>
           <button type="submit" class="btn">Save &amp; Connect</button>
         </div>
       </div>

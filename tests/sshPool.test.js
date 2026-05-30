@@ -147,6 +147,39 @@ Swap:     2147483648   536870912  1610612736`;
       expect(res[0].command).toBe('nginx');
     });
 
+    test('parses top command output correctly (converting RES to MB)', () => {
+      const stdout = `
+top - 12:00:00 up 1 day,  2:00,  1 user,  load average: 0.00, 0.00, 0.00
+Tasks:  95 total,   1 running,  94 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  0.0 us,  0.0 sy,  0.0 ni,100.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+MiB Mem :   1994.0 total,   1234.0 free,    300.0 used,    460.0 buff/cache
+MiB Swap:   1024.0 total,   1024.0 free,      0.0 used.   1540.0 avail Mem 
+
+  PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+ 1204 root      20   0   12345   1024   1234 S   2.4   0.5   0:01.02 nginx
+ 1421 systemd   20   0   12345   2.0m   1234 S   1.0   1.2   0:02.00 systemd-journal
+ 1555 user      20   0   12345   1.5g   1234 S   0.5   1.2   0:02.00 java
+`;
+      const res = parseProcesses(stdout);
+      expect(res.length).toBe(3);
+      
+      // 1204: RES 1024 (KiB by default) -> 1.0 MB
+      expect(res[0].pid).toBe(1204);
+      expect(res[0].cpu).toBe(2.4);
+      expect(res[0].mem).toBeCloseTo(1.0);
+      expect(res[0].command).toBe('nginx');
+
+      // 1421: RES 2.0m -> 2.0 MB
+      expect(res[1].pid).toBe(1421);
+      expect(res[1].cpu).toBe(1.0);
+      expect(res[1].mem).toBeCloseTo(2.0);
+
+      // 1555: RES 1.5g -> 1536.0 MB
+      expect(res[2].pid).toBe(1555);
+      expect(res[2].cpu).toBe(0.5);
+      expect(res[2].mem).toBeCloseTo(1536.0);
+    });
+
     test('handles NaN in numeric fields and defaults to 0', () => {
       const stdout =
 `  PID USER     %CPU %MEM COMMAND

@@ -626,7 +626,7 @@ function renderProcesses(processes) {
     tdCpu.textContent = p.cpu.toFixed(1) + '%';
 
     var tdMem = document.createElement('td');
-    tdMem.textContent = p.mem.toFixed(1) + '%';
+    tdMem.textContent = p.mem.toFixed(1) + ' MB';
 
     var tdCmd = document.createElement('td');
     tdCmd.className = 'table-cell-mono';
@@ -856,6 +856,116 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 });
 
+// ====== Bind event listeners dynamically (comply with CSP) ======
+function bindEvents() {
+  const loginForm = document.getElementById('loginForm');
+  if (loginForm) {
+    loginForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      login();
+    });
+  }
+
+  const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+  if (sidebarBackdrop) {
+    sidebarBackdrop.addEventListener('click', toggleSidebar);
+  }
+
+  const btnCloseSidebar = document.getElementById('btnCloseSidebar');
+  if (btnCloseSidebar) {
+    btnCloseSidebar.addEventListener('click', toggleSidebar);
+  }
+
+  const btnOpenSidebar = document.getElementById('btnOpenSidebar');
+  if (btnOpenSidebar) {
+    btnOpenSidebar.addEventListener('click', toggleSidebar);
+  }
+
+  const btnAddServer = document.getElementById('btnAddServer');
+  if (btnAddServer) {
+    btnAddServer.addEventListener('click', openServerModal);
+  }
+
+  const btnLogout = document.getElementById('btnLogout');
+  if (btnLogout) {
+    btnLogout.addEventListener('click', logout);
+  }
+
+  const btnDeleteServer = document.getElementById('btnDeleteServer');
+  if (btnDeleteServer) {
+    btnDeleteServer.addEventListener('click', deleteActiveServer);
+  }
+
+  const tabOverview = document.getElementById('tab-overview');
+  if (tabOverview) {
+    tabOverview.addEventListener('click', function () { switchTab('overview'); });
+  }
+
+  const tabProcesses = document.getElementById('tab-processes');
+  if (tabProcesses) {
+    tabProcesses.addEventListener('click', function () { switchTab('processes'); });
+  }
+
+  const tabDocker = document.getElementById('tab-docker');
+  if (tabDocker) {
+    tabDocker.addEventListener('click', function () { switchTab('docker'); });
+  }
+
+  const tabLogs = document.getElementById('tab-logs');
+  if (tabLogs) {
+    tabLogs.addEventListener('click', function () { switchTab('logs'); });
+  }
+
+  const thPid = document.getElementById('th-pid');
+  if (thPid) {
+    thPid.addEventListener('click', function () { toggleProcessSort('pid'); });
+  }
+
+  const thUser = document.getElementById('th-user');
+  if (thUser) {
+    thUser.addEventListener('click', function () { toggleProcessSort('user'); });
+  }
+
+  const thCpu = document.getElementById('th-cpu');
+  if (thCpu) {
+    thCpu.addEventListener('click', function () { toggleProcessSort('cpu'); });
+  }
+
+  const thMem = document.getElementById('th-mem');
+  if (thMem) {
+    thMem.addEventListener('click', function () { toggleProcessSort('mem'); });
+  }
+
+  const logSourceType = document.getElementById('logSourceType');
+  if (logSourceType) {
+    logSourceType.addEventListener('change', updateLogPlaceholder);
+  }
+
+  const btnStreamLogs = document.getElementById('btnStreamLogs');
+  if (btnStreamLogs) {
+    btnStreamLogs.addEventListener('click', fetchLogs);
+  }
+
+  const serverForm = document.getElementById('serverForm');
+  if (serverForm) {
+    serverForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      saveServer();
+    });
+  }
+
+  const hostAuthType = document.getElementById('hostAuthType');
+  if (hostAuthType) {
+    hostAuthType.addEventListener('change', toggleAuthFields);
+  }
+
+  const btnCancelModal = document.getElementById('btnCancelModal');
+  if (btnCancelModal) {
+    btnCancelModal.addEventListener('click', closeServerModal);
+  }
+}
+
 // ====== Init app ======
+bindEvents();
 checkAuth();
 bindTabAccessibility();

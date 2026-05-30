@@ -389,9 +389,21 @@ app.ws('/ws/monitor', (ws, req) => {
           return;
         }
         const conn = await sshPool.getConnection(targetServer);
-        const processesOut = await sshPool.execCommand(conn, `ps -eo pid,user,%cpu,%mem,comm --sort=-%cpu | head -n ${MAX_PROCESSES}`);
+        const processesOut = await sshPool.execCommand(conn, 'top -b -n 2 -d 0.2');
         const processes = sshPool.parseProcesses(processesOut);
-        sendWs(ws, { type: 'processes', serverId: targetServer.id, processes });
+
+        // Filter out idle kernel threads (0% CPU and 0 MB Memory)
+        const activeProcesses = processes.filter(p => p.cpu > 0 || p.mem > 0);
+
+        // Sort by CPU descending, then Memory descending as tie-breaker
+        activeProcesses.sort((a, b) => {
+          if (b.cpu !== a.cpu) {
+            return b.cpu - a.cpu;
+          }
+          return b.mem - a.mem;
+        });
+
+        sendWs(ws, { type: 'processes', serverId: targetServer.id, processes: activeProcesses.slice(0, MAX_PROCESSES) });
       }
 
       if (data.type === 'fetch-docker') {
