@@ -13,6 +13,10 @@ const logger = require('./logger');
 const app = express();
 const wsInstance = expressWs(app);
 
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 app.use(cors({
   origin: process.env.CORS_ORIGIN || false,
   credentials: true
@@ -134,7 +138,7 @@ app.post('/api/login', loginLimiter, (req, res) => {
       sameSite: 'strict',
       path: '/',
       maxAge: 24 * 60 * 60 * 1000,
-      secure: process.env.NODE_ENV === 'production'
+      secure: process.env.NODE_ENV === 'production' && req.secure
     });
     return res.json({ success: true });
   }
