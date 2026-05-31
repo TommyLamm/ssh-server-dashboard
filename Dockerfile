@@ -8,7 +8,8 @@ RUN npm ci --only=production
 
 FROM node:22-alpine
 WORKDIR /app
-RUN apk add --no-cache openssh-client sqlite-libs wget
+RUN apk update && apk upgrade --no-cache && apk add --no-cache openssh-client sqlite-libs wget
+RUN npm install -g npm@latest
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node
 COPY --chown=node:node --from=builder /app/node_modules ./node_modules
