@@ -226,6 +226,7 @@ function connectWebSocket() {
 
   ws.onclose = function () {
     updateWsStatus('disconnected');
+    if (!isLoggedIn) return;
     var delay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
     reconnectAttempts++;
     updateWsStatus('reconnecting');
